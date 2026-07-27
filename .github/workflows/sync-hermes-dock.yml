@@ -1,0 +1,107 @@
+name: Sync Hermes Dock bundled content
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-hermes-dock-bundled-content
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Update Hermes Dock seed data
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout content
+        uses: actions/checkout@v4
+        with:
+          path: content
+          lfs: true
+
+      - name: Require Hermes Dock token
+        env:
+          SYNC_TOKEN: ${{ secrets.HERMES_DOCK_SYNC_TOKEN }}
+        run: |
+          if [[ -z "$SYNC_TOKEN" ]]; then
+            echo "Repository secret HERMES_DOCK_SYNC_TOKEN is required" >&2
+            exit 1
+          fi
+
+      - name: Checkout Hermes Dock
+        uses: actions/checkout@v4
+        with:
+          repository: sqyl2026/hermes-dock
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.HERMES_DOCK_SYNC_TOKEN }}
+          path: hermes-dock
+
+      - name: Validate content
+        run: |
+          if [[ ! -f content/SOUL.md || -L content/SOUL.md ]]; then
+            echo "SOUL.md must be a regular file" >&2
+            exit 1
+          fi
+          if [[ ! -d content/skills || -L content/skills ]]; then
+            echo "skills must be a directory" >&2
+            exit 1
+          fi
+          unsafe_path="$(find content/skills ! -type d ! -type f -print -quit)"
+          if [[ -n "$unsafe_path" ]]; then
+            echo "Content contains a link or special file: $unsafe_path" >&2
+            exit 1
+          fi
+
+      - name: Sync seed data
+        env:
+          CONTENT_SHA: ${{ github.sha }}
+        run: |
+          rm -rf hermes-dock/templates/seed-data/skills
+          install -m 0644 content/SOUL.md hermes-dock/templates/seed-data/SOUL.md
+          cp -a content/skills hermes-dock/templates/seed-data/skills
+          printf '%s\n' "$CONTENT_SHA" > hermes-dock/templates/seed-data/.content-commit
+
+      - name: Commit and push Hermes Dock
+        working-directory: hermes-dock
+        env:
+          CONTENT_SHA: ${{ github.sha }}
+        run: |
+          if [[ -z "$(git status --porcelain -- templates/seed-data/SOUL.md templates/seed-data/skills templates/seed-data/.content-commit)" ]]; then
+            echo "Hermes Dock already contains content commit $CONTENT_SHA"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all -- templates/seed-data/SOUL.md templates/seed-data/skills templates/seed-data/.content-commit
+          git commit \
+            -m "chore(content): sync bundled content to ${CONTENT_SHA:0:7}" \
+            -m "Source: https://github.com/sqyl2026/hermes-dock-content/commit/$CONTENT_SHA"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            if [[ "$attempt" == "3" ]]; then
+              break
+            fi
+            git fetch origin main
+            if git merge-base --is-ancestor origin/main HEAD; then
+              echo "Push failed without a newer Hermes Dock main commit; not retrying" >&2
+              exit 1
+            fi
+            if ! git diff --quiet HEAD^ origin/main -- templates/seed-data/SOUL.md templates/seed-data/skills templates/seed-data/.content-commit; then
+              echo "Hermes Dock main changed bundled content during synchronization" >&2
+              exit 1
+            fi
+            if ! git rebase origin/main; then
+              git rebase --abort
+              echo "Hermes Dock main conflicts with the bundled content update" >&2
+              exit 1
+            fi
+          done
+          echo "Hermes Dock main kept changing; push failed after 3 attempts" >&2
+          exit 1
