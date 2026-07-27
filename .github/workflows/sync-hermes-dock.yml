@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout content
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: content
           lfs: true
@@ -33,7 +33,7 @@ jobs:
           fi
 
       - name: Checkout Hermes Dock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: sqyl2026/hermes-dock
           ref: main
