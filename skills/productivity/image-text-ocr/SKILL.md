@@ -1,11 +1,11 @@
 ---
 name: image-text-ocr
-description: Extract visible text from local screenshots, photos, and image attachments with bundled PP-OCRv6_small models and an on-demand local PaddleOCR runtime. Use for explicit image-to-text requests and as a local OCR fallback when image auto-analysis or vision_analyze fails but the user's request can be completed from the image text alone. Do not use as a substitute for object, person, scene, color, chart, or other visual-semantic understanding.
+description: Extract visible text from local PNG and JPEG screenshots, photos, and image attachments with an on-demand local light-ocr runtime. Use for explicit image-to-text requests and as a local OCR fallback when image auto-analysis or vision_analyze fails but the user's request can be completed from the image text alone. Do not use as a substitute for object, person, scene, color, chart, or other visual-semantic understanding.
 ---
 
 # Image Text OCR
 
-Use the bundled local models to extract text without sending the image to an external service or downloading model files. The first run downloads hash-locked Python dependencies; later runs reuse the persistent local environment.
+Use light-ocr to extract text locally without sending the image to an external service. The first run installs the version-locked OCR runtime and model from npm; later runs work offline with the persistent local installation.
 
 ## Run OCR
 
@@ -19,17 +19,9 @@ Pass one local image under the current profile directory:
 
 For a non-default profile, run the same relative `skills/...` script from that profile's working directory and pass an image path inside that profile directory.
 
-Always use `run_ocr.py`; do not invoke `ocr_image.py` directly or install packages with an ad hoc command. If the managed OCR environment is missing, the wrapper creates it under `/opt/data/.dock/image-text-ocr-venv`, installs the pinned binary wheels, verifies the runtime, and then runs OCR. Preserve its stderr so dependency download or installation failures remain visible.
+Always use `run_ocr.py`; do not invoke `light-ocr` directly or install packages with an ad hoc command. If the managed runtime is missing or invalid, the wrapper installs the locked npm dependency under `/opt/data/.dock/image-text-ocr-runtime/0.5.5`, verifies it, and then runs OCR. Preserve stderr so installation and OCR failures remain visible.
 
-The script prints one JSON object containing:
-
-- `success`: whether OCR completed.
-- `textFound`: whether any non-empty text was recognized.
-- `text`: recognized lines joined with newlines.
-- `lines`: recognized text, confidence score, and polygon for each line.
-- `model`: the bundled detection and recognition model names.
-
-Treat `success: true` with `textFound: false` as a valid image with no recognized text. Treat `success: false` as an actual failure and report its `error` without inventing results.
+Check the exit code before parsing stdout. Exit code `0` prints light-ocr schema version 1 JSON. Read recognized lines from `pages[].lines[]`; each line contains `text`, `confidence`, and `box`. An empty `lines` array is a valid image with no recognized text. On a non-zero exit, read stderr and do not invent results.
 
 ## Vision Fallback
 
@@ -41,21 +33,9 @@ If the request still needs visual understanding after OCR, return the extracted 
 
 ## Input Limits
 
-- Accept one local raster image readable by Pillow.
-- Reject URLs, PDFs, directories, files outside `HERMES_WRITE_SAFE_ROOT`, files larger than 25 MiB, images larger than 25 million pixels, and images with either dimension above 10,000 pixels.
-- Keep the original line order returned by PaddleOCR and preserve per-line confidence scores.
-- Never download model files. Python dependencies may be downloaded only through `run_ocr.py` when its managed environment is missing or invalid.
+- Accept one local PNG, JPG, or JPEG image.
+- Reject URLs, PDFs, directories, files outside `HERMES_WRITE_SAFE_ROOT`, and files larger than 25 MiB.
+- Keep the line order returned by light-ocr and preserve confidence scores and boxes.
+- Allow npm access only when `run_ocr.py` needs to install or repair its managed runtime. Image recognition itself must remain offline.
 
-## Bundled Models
-
-Use only these local assets:
-
-- `assets/models/PP-OCRv6_small_det_infer`
-- `assets/models/PP-OCRv6_small_rec_infer`
-
-The models come from the official PaddleOCR 3.7.0 release and are distributed under Apache License 2.0. The upstream archives are:
-
-- `https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_small_det_infer.tar`
-- `https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_small_rec_infer.tar`
-
-The archive SHA-256 values are `bfb7c1e59f0faa6b540ebdca93aea3f4b1f2477805b389fbee117820d68fe9f5` for detection and `da460f968ce9f88325ac3a34fa302077d6e9b0dcefb16ba3137cd7796f879d06` for recognition. Keep the bundled `LICENSE` file with the skill.
+The managed runtime uses `@arcships/light-ocr` 0.5.5, which bundles PP-OCRv6 Small and is distributed under Apache License 2.0. Do not add model files or `node_modules` to this skill.

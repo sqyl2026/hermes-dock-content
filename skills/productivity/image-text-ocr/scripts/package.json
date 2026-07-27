@@ -1,0 +1,8 @@
+{
+  "name": "hermes-dock-image-text-ocr-runtime",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@arcships/light-ocr": "0.5.5"
+  }
+}

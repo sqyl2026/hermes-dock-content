@@ -13,6 +13,8 @@ skills/
 
 提交到 `main` 前，应确认内容可以直接同步给 Hermes Dock 用户。
 
+技能目录保持可频繁同步的轻量内容，不提交 `node_modules`、虚拟环境或可按需安装的大模型和运行依赖。此类依赖由技能包装脚本在首次使用时安装到 Hermes Dock 的 `data/.dock/` 派生运行时目录，并通过版本与 lockfile 固定。
+
 ## 同步到 Hermes Dock
 
 每次 commit 推送到 `main` 时，`.github/workflows/sync-hermes-dock.yml` 会：
