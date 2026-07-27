@@ -1,6 +1,6 @@
 # Word（python-docx 与 OOXML）
 
-依赖：`python-docx`，Python 中使用 `import docx`。先阅读 `../SKILL.md` 的容器路径、输出、安全和 Word 修改规则。`python-docx` 没有覆盖修订、动态目录等全部 Word 功能；需要时通过它提供的 OOXML 元素操作 WordprocessingML，不要改写整个 ZIP 包。
+依赖：`python-docx`，Python 中使用 `import docx`；生成原生批注时要求 `python-docx>=1.2.0`。先阅读 `../SKILL.md` 的容器路径、输出、安全和 Word 修改规则。`python-docx` 没有覆盖修订、动态目录等全部 Word 功能；需要时通过它提供的 OOXML 元素操作 WordprocessingML，不要改写整个 ZIP 包。
 
 ## 目录
 
@@ -10,6 +10,7 @@
 - [直接替换文本](#直接替换文本)
 - [新增内容修订](#新增内容修订)
 - [处理已有修订](#处理已有修订)
+- [生成 DOCX 原生批注](#生成-docx-原生批注)
 - [局部和全局字体格式](#局部和全局字体格式)
 - [生成标准目录](#生成标准目录)
 - [局部和全局行间距](#局部和全局行间距)
@@ -384,6 +385,161 @@ append_property_revision(rpr, previous_rpr, "w:rPrChange", revision_id, author)
 
 拒绝删除修订时还要把 `w:delInstrText` 恢复成 `w:instrText`，并保留 `xml:space`。处理完成后检查目标 ID 已按预期消失，其他修订 ID 和内容保持不变。
 
+## 生成 DOCX 原生批注
+
+用户要求“批注”“评论”或 comment 时，生成 Word/WPS 可在审阅窗格中识别的原生批注。不要用括号文字、脚注、文本框、高亮或正文尾注模拟批注。批注和修订是两套独立结构；只添加批注时不要开启 `w:trackRevisions`。
+
+### 使用 python-docx 1.2.0 以上版本
+
+完整脚本的 PEP 723 依赖至少声明：
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["python-docx>=1.2.0"]
+# ///
+```
+
+优先使用 `Document.add_comment()`，不要手工拼装 DOCX ZIP 包。该 API 会创建或复用 `/word/comments.xml`，写入 Content Type 和 relationship，并在正文中生成 `w:commentRangeStart`、`w:commentRangeEnd` 和 `w:commentReference`。
+
+```python
+comment = document.add_comment(
+    anchor_run,
+    text="请核对本段数据来源。",
+    author="Hermes Agent",
+    initials="HA",
+)
+print(f"新增原生批注 ID：{comment.comment_id}")
+```
+
+作者不能为空。用户未指定作者时使用清晰的代理名称，例如 `Hermes Agent`，不要冒用用户或其他审阅者身份。`text` 中的换行会创建多个批注段落；需要粗体等复杂格式时先创建空批注，再操作返回对象：
+
+```python
+comment = document.add_comment(anchor_run, author="Hermes Agent", initials="HA")
+comment.paragraphs[0].add_run("重点：").bold = True
+comment.paragraphs[0].add_run("请核对本段数据来源。")
+comment.add_paragraph("如有调整，请同步更新附表。")
+```
+
+`python-docx` 会自动使用未占用的批注 ID，并记录 UTC 时间；不要自行复用已有 ID。
+
+### 精确建立批注锚点
+
+批注必须锚定非空、连续且位于完整 run 边界上的文本范围：
+
+- 单个 run：把同一个 `Run` 传给 `add_comment()`。
+- 多个连续 run：传入从第一个到最后一个 run 的序列；API 只使用首尾 run，二者之间的所有内容都会被纳入批注范围。
+- 目标只占 run 的一部分：先拆分边界 run，使目标文本成为独立 run，再添加批注。
+- 目标跨 run：使用“直接替换文本”一节的可见字符映射拆分首尾边界，确认中间范围连续后再添加。
+
+不要把多个不连续的匹配 run 一次传给 `add_comment()`，否则首尾之间不相关的正文也会被批注。没有命中时失败；多个命中且用户没有指定范围时先询问。
+
+以下辅助函数用于“目标在单个纯文本 run 中恰好出现一次”的常见情况。复用前文的 `is_plain_text_run()` 和 `make_text_run()`，保留原字符格式：
+
+```python
+from docx.text.run import Run
+
+
+def isolate_text_for_comment(run, target: str):
+    if not target:
+        raise ValueError("批注目标不能为空")
+    if run.text.count(target) != 1:
+        raise ValueError("目标必须在该 run 中恰好命中一次")
+    if not is_plain_text_run(run):
+        raise ValueError("目标 run 含非纯文本对象，拒绝破坏其结构")
+
+    text = run.text
+    start = text.index(target)
+    end = start + len(target)
+    if start == 0 and end == len(text):
+        return run
+
+    source = run._r
+    parent = source.getparent()
+    position = parent.index(source)
+    run_parent = run._parent
+    nodes = []
+    if start:
+        nodes.append(make_text_run(source, text[:start]))
+    anchor_element = make_text_run(source, text[start:end])
+    nodes.append(anchor_element)
+    if end < len(text):
+        nodes.append(make_text_run(source, text[end:]))
+
+    parent.remove(source)
+    for offset, node in enumerate(nodes):
+        parent.insert(position + offset, node)
+    return Run(anchor_element, run_parent)
+```
+
+典型调用流程：
+
+```python
+TARGET = "2026 年度预算"
+COMMENT_TEXT = "请确认预算是否已经财务部门复核。"
+
+matches = []
+for paragraph in iter_story_paragraphs(document):
+    for run in paragraph.runs:
+        if TARGET in run.text:
+            matches.append(run)
+
+if len(matches) != 1:
+    raise ValueError(f"批注目标命中 {len(matches)} 次，无法唯一定位")
+
+anchor_run = isolate_text_for_comment(matches[0], TARGET)
+comment = document.add_comment(
+    anchor_run,
+    text=COMMENT_TEXT,
+    author="Hermes Agent",
+    initials="HA",
+)
+document.save(str(OUTPUT_PATH))
+```
+
+上例只处理主文档 part 中的普通段落和表格。`python-docx` 的原生批注 API 不支持把批注锚点写入页眉、页脚、文本框、脚注或尾注；遇到这些范围时明确报告，不要生成看似成功但 Word 无法正确关联的标记。批注锚点跨超链接、修订包装器、书签、域或不同 part 时，除非已经实现对应的边界和配对校验，否则停止。
+
+### 验证原生批注结构
+
+保存后必须重新打开，并同时验证批注内容和 OOXML 锚点：
+
+```python
+import zipfile
+from lxml import etree
+
+reopened = docx.Document(str(OUTPUT_PATH))
+saved_comment = reopened.comments.get(comment.comment_id)
+if saved_comment is None:
+    raise ValueError("保存后找不到新增批注")
+if saved_comment.text != COMMENT_TEXT or saved_comment.author != "Hermes Agent":
+    raise ValueError("保存后的批注内容或作者不匹配")
+
+W = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+with zipfile.ZipFile(OUTPUT_PATH) as archive:
+    names = set(archive.namelist())
+    if "word/comments.xml" not in names:
+        raise ValueError("DOCX 缺少 word/comments.xml")
+
+    document_xml = etree.fromstring(archive.read("word/document.xml"))
+    comments_xml = etree.fromstring(archive.read("word/comments.xml"))
+    comment_ids = set(comments_xml.xpath("//w:comment/@w:id", namespaces=W))
+    start_ids = set(document_xml.xpath("//w:commentRangeStart/@w:id", namespaces=W))
+    end_ids = set(document_xml.xpath("//w:commentRangeEnd/@w:id", namespaces=W))
+    reference_ids = set(document_xml.xpath("//w:commentReference/@w:id", namespaces=W))
+    expected_id = str(comment.comment_id)
+    if expected_id not in comment_ids & start_ids & end_ids & reference_ids:
+        raise ValueError("批注正文、范围起点、范围终点和引用 ID 未完整配对")
+
+    rels = archive.read("word/_rels/document.xml.rels")
+    content_types = archive.read("[Content_Types].xml")
+    if b"/relationships/comments" not in rels:
+        raise ValueError("DOCX 缺少 comments relationship")
+    if b"wordprocessingml.comments+xml" not in content_types:
+        raise ValueError("DOCX 缺少 comments Content Type")
+```
+
+原生批注不等于现代协作线程。`python-docx` 生成的是 WordprocessingML 标准批注，可在 Word/WPS 审阅界面显示；不要声称支持回复线程、@提及、已解决状态或 `commentsExtended.xml`，除非另行实现并验证这些扩展 part。
+
 ## 局部和全局字体格式
 
 ### 字体属性
@@ -679,8 +835,9 @@ def main():
 4. 对字体读取 `w:rFonts` 四个槽位、字号、颜色和布尔格式；分别验证样式属性与直接格式。
 5. 对行距读取 `line_spacing`、`line_spacing_rule`、`space_before` 和 `space_after`。
 6. 对修订检查 `word/document.xml` 及涉及的页眉页脚 part，确认目标 `w:id`、作者、时间、`w:ins/w:del` 或属性 change 存在，其他修订未变化。
-7. 对目录检查完整的 begin/instrText/separate/end 域结构和 `word/settings.xml` 中的 `w:updateFields`。
-8. 验证失败时删除本次新建的不完整输出；保留脚本并报告真实错误。
+7. 对批注检查 `word/comments.xml`、document relationship、Content Type，以及相同 ID 的 `commentRangeStart/commentRangeEnd/commentReference`；重新打开后核对批注正文和作者。
+8. 对目录检查完整的 begin/instrText/separate/end 域结构和 `word/settings.xml` 中的 `w:updateFields`。
+9. 验证失败时删除本次新建的不完整输出；保留脚本并报告真实错误。
 
 可以用 ZIP 做只读结构检查：
 
@@ -694,7 +851,7 @@ with zipfile.ZipFile(OUTPUT_PATH) as archive:
     settings_xml = etree.fromstring(archive.read("word/settings.xml"))
 ```
 
-最终报告输出完整路径、修改模式、实际范围、命中数量、修订作者、未覆盖对象，以及目录是否仍需在 Word/WPS 中更新。视觉版式只有经过 Word/WPS 或兼容排版引擎打开/渲染后才能确认；纯 XML 验证不能证明分页、换行和字体替换后的视觉效果完全正确。
+最终报告输出完整路径、修改模式、实际范围、命中数量、修订或批注作者、新增批注 ID、未覆盖对象，以及目录是否仍需在 Word/WPS 中更新。视觉版式只有经过 Word/WPS 或兼容排版引擎打开/渲染后才能确认；纯 XML 验证不能证明分页、换行和字体替换后的视觉效果完全正确。
 
 ## 能力边界
 
@@ -702,6 +859,7 @@ with zipfile.ZipFile(OUTPUT_PATH) as archive:
 - 不修改 `.docm`、密码保护、损坏或依赖宏的文件。
 - 跨 run 替换必须映射并拆分边界；不使用合并段落内容的降级方案。
 - 对移动修订、表格结构修订、编号修订、嵌套域或跨 part 修订，只有实现并验证完整配对语义时才能自动接受或拒绝。
+- 原生批注只锚定主文档 part 中完整 run 边界上的连续文本；不承诺页眉、页脚、文本框、脚注、尾注、回复线程、@提及或已解决状态。
 - 字体名称写入 DOCX 不代表运行环境或收件人电脑已安装该字体；字体替换和最终换行取决于打开文档的客户端。
 - TOC 域可以由脚本创建，但真实页码和目录结果必须由 Word/WPS 等排版引擎更新。
 - 行距是段落级属性；不能承诺同一段落中的局部字符使用不同的行距。
