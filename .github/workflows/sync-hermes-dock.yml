@@ -23,6 +23,12 @@ jobs:
           path: content
           lfs: true
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Test content tools
+        run: uv run --no-project --python 3.12 python -m unittest discover -s content/tests -v
+
       - name: Require Hermes Dock token
         env:
           SYNC_TOKEN: ${{ secrets.HERMES_DOCK_SYNC_TOKEN }}
@@ -54,6 +60,18 @@ jobs:
           unsafe_path="$(find content/skills ! -type d ! -type f -print -quit)"
           if [[ -n "$unsafe_path" ]]; then
             echo "Content contains a link or special file: $unsafe_path" >&2
+            exit 1
+          fi
+          bundled_ocr_runtime="$(find content/skills/productivity/image-text-ocr \
+            \( -type d -name node_modules -o -type d -path '*/assets/models' \
+            -o -type f \( -name '*.onnx' -o -name '*.pdiparams' \) \) -print -quit)"
+          if [[ -n "$bundled_ocr_runtime" ]]; then
+            echo "image-text-ocr must install its runtime on demand: $bundled_ocr_runtime" >&2
+            exit 1
+          fi
+          content_archive_bytes="$(tar -C content -czf - SOUL.md skills | wc -c)"
+          if (( content_archive_bytes > 10 * 1024 * 1024 )); then
+            echo "Compressed bundled content exceeds the 10 MiB budget" >&2
             exit 1
           fi
 

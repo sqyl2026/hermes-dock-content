@@ -20,9 +20,10 @@ skills/
 每次 commit 推送到 `main` 时，`.github/workflows/sync-hermes-dock.yml` 会：
 
 1. 检出触发 workflow 的内容 commit。
-2. 更新 `sqyl2026/hermes-dock` 的 `templates/seed-data/SOUL.md` 和 `templates/seed-data/skills/`。
-3. 将来源 SHA 写入 `templates/seed-data/.content-commit`。
-4. 使用 `chore(content): sync bundled content to <sha>` 直接提交并推送到 Hermes Dock `main`。
+2. 运行内容工具测试，并拒绝 OCR 模型、`node_modules` 或压缩后超过 10 MiB 的内置内容。
+3. 更新 `sqyl2026/hermes-dock` 的 `templates/seed-data/SOUL.md` 和 `templates/seed-data/skills/`。
+4. 将来源 SHA 写入 `templates/seed-data/.content-commit`。
+5. 使用 `chore(content): sync bundled content to <sha>` 直接提交并推送到 Hermes Dock `main`。
 
 内容仓库需要配置 Actions Secret：
 
