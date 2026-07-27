@@ -1,0 +1,4 @@
+interface:
+  display_name: "网站 API 自动化"
+  short_description: "登录网站、还原真实 API 调用并完成可稳定复现的自动化任务"
+  default_prompt: "使用 $website-automation 登录网站，完成任务并整理可复现的 API 调用链。"

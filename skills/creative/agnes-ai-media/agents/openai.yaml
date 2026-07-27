@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agnes AI Media"
+  short_description: "Use Agnes AI to generate and edit images/videos"
+  default_prompt: "Use $agnes-ai-media to generate an image or video with Agnes AI."

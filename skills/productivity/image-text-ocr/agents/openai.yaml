@@ -1,0 +1,4 @@
+interface:
+  display_name: "图片文字 OCR"
+  short_description: "使用本地 PaddleOCR 识别图片中的可见文字内容"
+  default_prompt: "Use $image-text-ocr to extract visible text from this image locally."

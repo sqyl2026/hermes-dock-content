@@ -1,0 +1,4 @@
+interface:
+  display_name: "Word 与 Excel 文件处理"
+  short_description: "读取、修改和创建 Word、Excel 与 CSV 文件"
+  default_prompt: "使用 $office-files 处理共享目录中的 Word、Excel 或 CSV 文件。"

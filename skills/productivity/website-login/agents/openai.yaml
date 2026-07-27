@@ -1,0 +1,4 @@
+interface:
+  display_name: "网站登录"
+  short_description: "使用浏览器安全完成网站登录，并处理图片验证码与用户人工验证流程"
+  default_prompt: "Use $website-login to sign in to this website with the account information I provide."

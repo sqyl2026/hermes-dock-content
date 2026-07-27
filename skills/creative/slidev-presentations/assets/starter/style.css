@@ -1,0 +1,123 @@
+:root {
+  --deck-bg: #08111f;
+  --deck-surface: #12213a;
+  --deck-text: #f4f7fb;
+  --deck-muted: #bdc8d8;
+  --deck-accent: #ffb454;
+  --deck-accent-soft: #ffe0ad;
+}
+
+html,
+body,
+#app {
+  color: var(--deck-text);
+  background: var(--deck-bg);
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+
+.slidev-layout {
+  color: var(--deck-text);
+  background: var(--deck-bg);
+  font-size: 28px;
+  line-height: 1.45;
+}
+
+.slidev-layout h1 {
+  max-width: 1080px;
+  margin: 0 0 30px;
+  color: var(--deck-text);
+  font-size: 56px;
+  font-weight: 720;
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+}
+
+.slidev-layout p {
+  color: var(--deck-muted);
+  opacity: 1 !important;
+}
+
+.slidev-layout strong {
+  color: var(--deck-text);
+}
+
+.slidev-layout ul,
+.slidev-layout ol {
+  margin-top: 24px;
+}
+
+.slidev-layout li + li {
+  margin-top: 14px;
+}
+
+.eyebrow {
+  margin-bottom: 30px;
+  color: var(--deck-accent);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.deck-subtitle {
+  max-width: 820px;
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.45;
+}
+
+.section-index {
+  margin-bottom: 28px;
+  color: var(--deck-accent);
+  font-size: 80px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.section-summary {
+  max-width: 760px;
+  margin: 0;
+  font-size: 28px;
+}
+
+.visual-placeholder {
+  display: flex;
+  min-height: 360px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  border-radius: 28px;
+  color: var(--deck-muted);
+  background: var(--deck-surface);
+  text-align: center;
+}
+
+.visual-placeholder strong {
+  font-size: 32px;
+}
+
+.visual-placeholder span {
+  max-width: 420px;
+  font-size: 22px;
+}
+
+.metric-value {
+  margin: 24px 0 30px;
+  color: var(--deck-accent);
+  font-size: 150px;
+  font-weight: 780;
+  line-height: 0.9;
+  letter-spacing: -0.055em;
+}
+
+.metric-context {
+  max-width: 820px;
+  font-size: 24px;
+}
+
+.slidev-layout.end {
+  background:
+    radial-gradient(circle at 75% 20%, rgb(255 180 84 / 18%), transparent 38%),
+    var(--deck-bg);
+}

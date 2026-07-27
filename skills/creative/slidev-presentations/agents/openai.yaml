@@ -1,0 +1,4 @@
+interface:
+  display_name: "Slidev 幻灯片创作"
+  short_description: "使用 Slidev 创作并导出结构清晰、视觉完成度高的演示文稿"
+  default_prompt: "使用 $slidev-presentations 创作一套结构清晰、视觉完成度高的演示文稿。"
