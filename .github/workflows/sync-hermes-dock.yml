@@ -27,7 +27,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Test content tools
-        run: uv run --no-project --python 3.12 python -m unittest discover -s content/tests -v
+        run: uv run --no-project --python 3.12 python -B -m unittest discover -s content/tests -v
 
       - name: Require Hermes Dock token
         env:
@@ -63,8 +63,8 @@ jobs:
             exit 1
           fi
           bundled_ocr_runtime="$(find content/skills/productivity/image-text-ocr \
-            \( -type d -name node_modules -o -type d -path '*/assets/models' \
-            -o -type f \( -name '*.onnx' -o -name '*.pdiparams' \) \) -print -quit)"
+            \( -type d \( -name node_modules -o -name __pycache__ -o -path '*/assets/models' \) \
+            -o -type f \( -name '*.pyc' -o -name '*.onnx' -o -name '*.pdiparams' \) \) -print -quit)"
           if [[ -n "$bundled_ocr_runtime" ]]; then
             echo "image-text-ocr must install its runtime on demand: $bundled_ocr_runtime" >&2
             exit 1
