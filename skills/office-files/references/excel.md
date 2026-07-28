@@ -7,6 +7,7 @@
 | 任务 | 额外参考 | 主要方法 |
 |---|---|---|
 | 读取、汇总、数据质量检查 | `excel-read.md` | 只读结构检查、`openpyxl`、pandas |
+| 从表格数据生成静态图表图片 | `excel-read.md`、`excel-chart.md` | pandas 聚合、Matplotlib 渲染、中文字体与 PNG 验证 |
 | 创建新的 XLSX | `excel-create.md` | `openpyxl.Workbook()` |
 | 修改现有 XLSX | `excel-edit.md` | 按任务检查相关结构，选择最小写入路径并验证 |
 | 写入、检查或修复公式 | `excel-formulas.md` | 公式字符串、静态验证、可用时对副本动态重算 |
