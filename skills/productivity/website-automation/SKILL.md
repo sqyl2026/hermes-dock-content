@@ -11,7 +11,7 @@ description: 使用镜像内置的 agent-browser 登录网站、观察真实网�
 
 1. 用 `terminal` 执行 `/opt/hermes/node_modules/.bin/agent-browser --version`。失败时返回真实错误并停止；不要用 `npx` 安装，不要改用 `browser_*`，也不要切换付费浏览器。
 2. 为任务创建只含小写字母、数字和连字符的唯一会话名，如 `website-7f3a2c`。后续每条命令都显式传入 `--session <会话名>`，不得中途换名或混用 `browser_*`。
-3. 需要登录时读取 `skills/productivity/website-login/SKILL.md`，把当前会话名交给登录流程复用。凭据 batch 的完整行中继、验证码失败归因和登录图片交付都由该技能处理，不要另行拼接含凭据的 `echo` 命令。登录完成后继续使用同一会话。
+3. 需要登录时读取 `skills/productivity/website-login/SKILL.md`，把当前会话名交给登录流程复用。凭据 batch 管道、canvas 验证码、算术答案、点击失效诊断和登录图片交付都由该技能处理。只有该技能按 URL、页面和网络证据确认成功后，才继续使用同一会话。
 4. 用 `open <URL>` 打开目标页，再用 `snapshot -i -c` 获取交互元素。页面变化后重新获取快照；旧 `@eN` 引用不得跨页面状态复用。
 
 示例仅表示命令结构：
@@ -34,7 +34,7 @@ description: 使用镜像内置的 agent-browser 登录网站、观察真实网�
 
 用户已经明确要求的查询、筛选、导出和普通业务操作无需逐步确认。付款、删除、发布、发消息、授权、账号变更等难以撤销且未被用户明确要求的动作，在最终提交前确认。
 
-登录阶段出现 `Invalid JSON input`、`EOF while parsing` 或 batch 解析失败时，把它视为本地输入通道失败，不得误判为验证码错误、刷新验证码或消耗验证码提交次数。按 `website-login` 的完整行中继方式修正输入，确认页面状态后继续。
+登录阶段出现 `Invalid JSON input`、`EOF while parsing` 或 batch 解析失败时，把它视为本地输入通道失败，不得误判为验证码错误、刷新验证码或消耗验证码提交次数。按 `website-login` 的单次前台 `printf` 管道修正输入。click 返回成功但没有页面变化时也不代表提交成功；按该技能检查网络请求，并只在确认请求未发出后使用一次原生 `MouseEvent`。
 
 ## 安全观察请求
 

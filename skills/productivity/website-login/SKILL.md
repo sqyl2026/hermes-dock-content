@@ -1,6 +1,6 @@
 ---
 name: website-login
-description: 使用镜像内置的 agent-browser 安全登录网站。适用于账号密码登录、简单静态图片验证码、短信或邮件验证码、动态口令、扫码和手机确认；凭据只经 batch 标准输入传入浏览器，不进入 shell 参数、环境变量或文件。不用于绕过滑块、reCAPTCHA、设备验证、安全控件或其他反自动化机制。
+description: 使用镜像内置的 agent-browser 安全登录网站。适用于账号密码登录、canvas 或 img 静态图片验证码、算术验证码、短信或邮件验证码、动态口令、扫码和手机确认；凭据只通过 batch 标准输入传入浏览器，不写入文件、环境变量或 agent-browser 进程参数。不用于绕过滑块、reCAPTCHA、设备验证、安全控件或其他反自动化机制。
 ---
 
 # 网站登录
@@ -34,35 +34,32 @@ description: 使用镜像内置的 agent-browser 安全登录网站。适用于�
 
 ## 安全传递凭据
 
-账号、密码、验证码和动态口令只能通过 `agent-browser batch` 的标准输入传递。不得把它们放入 `terminal` 命令、进程参数、环境变量、文件、文件名、网页脚本或普通日志；不得用 `browser_type`。
+账号、密码、验证码和动态口令只能通过前台 `printf` 管道一次性写入 `agent-browser batch` 的标准输入。不得把它们放入环境变量、文件、文件名、网页脚本或 `agent-browser` 参数；不得用 `browser_type`。
 
 按以下方式执行：
 
 1. 先用快照确认唯一定位方式，并在提交前确认 origin。
-2. 用 `terminal(background=true, pty=false)` 启动下列固定的完整行中继。命令本身不得包含真实凭据或待执行的 JSON：
-
-```bash
-sh -c '
-  IFS= read -r payload || exit 64
-  printf "%s\n" "$payload" |
-    /opt/hermes/node_modules/.bin/agent-browser \
-      --session website-login-7f3a2c --json batch --bail
-'
-```
-
-3. 构造一个语法完整且不含实际换行的单行 JSON 命令数组。字符串中的换行等特殊字符按 JSON 规则转义。使用语义定位或已确认的 selector；下面的值只表示结构，实际值由用户提供：
+2. 构造一个语法完整且不含实际换行的单行 JSON 命令数组。字符串中的引号、反斜杠和换行等特殊字符先按 JSON 规则转义。使用语义定位或已确认的 selector；下面的值只表示结构，实际值由用户提供：
 
 ```json
 [["find","label","用户名","fill","<用户名>"],["find","label","密码","fill","<密码>"],["find","role","button","click","--name","登录"]]
 ```
 
-4. 只调用一次 `process(action="write", session_id="<上一步返回的进程 ID>", data="<单行完整 JSON 数组>\n")`，把整个数组连同唯一的末尾换行一次写入；不得分片，不得在 JSON 中加入实际换行，也不得省略末尾换行。随后直接调用同一进程的 `process(action="wait")`。中继会在读到换行后向 `agent-browser` 发送完整 JSON 并自动结束其标准输入；不要调用 `process close` 制造 EOF。
-5. 不得把含真实凭据的 JSON 改写成 `echo '<JSON>' | agent-browser ...`、here-document 或 `printf '<JSON>'` 终端命令。凭据写入期间不要调用 `process log`，不要在结果中复述输入值。
-6. 需要图片验证码时，先完成识别，再把账号、密码、验证码和提交动作放进同一个 batch，避免提交前验证码刷新。
+3. 把单行 JSON 作为 `printf '%s\n'` 的单引号参数；JSON 中如果含单引号，用 shell 的 `'"'"'` 序列转义。用一次前台 `terminal` 调用执行完整管道，不使用 `background`、`process write`、`process close`、临时文件或环境变量：
+
+```bash
+printf '%s\n' '<单行完整 JSON 数组>' |
+  /opt/hermes/node_modules/.bin/agent-browser \
+    --session website-login-7f3a2c --json batch --bail
+```
+
+4. 不使用 `echo`，避免反斜杠、`-n` 和不同 shell 行为改变 JSON。不要输出实际命令、调用进程日志或在结果中复述输入值。
+5. 需要图片验证码时，先完成识别和算术处理，再把账号、密码、最终验证码答案和提交动作放进同一个 batch，避免提交前验证码刷新。
+6. 提交前执行 `network requests --clear`。batch 返回后立即检查 URL、快照和 `network requests --type xhr,fetch,document`，区分“点击命令执行”“登录请求发出”和“网站接受登录”三个不同状态。
 
 把输入通道错误与网站拒绝分开判断：
 
-- `Invalid JSON input`、`EOF while parsing`、batch 解析失败或中继进程在浏览器动作执行前退出，属于本地输入格式或传输失败，不证明账号、密码或验证码错误。不要刷新验证码，不计入验证码提交次数；先修正为“单行完整 JSON + 唯一的末尾换行 + 单次 write”，再用快照和 URL 检查页面是否变化。页面未变化时复用当前验证码；无法确认时重新截取当前验证码元素并识别，但不要主动点击刷新。
+- `Invalid JSON input`、`EOF while parsing` 或 batch 解析失败属于本地 JSON、shell 转义或管道错误，不证明账号、密码或验证码错误。不要刷新验证码，不计入验证码提交次数；修正为单行 JSON 和一次前台 `printf` 管道，再检查页面是否变化。
 - batch 已成功执行提交，且页面明确显示“验证码错误”“验证码过期”或等价提示，才按验证码失败处理并计入一次提交。
 - 页面明确显示账号或密码错误、账号锁定、权限不足或风控拒绝时，按对应错误处理，不得归因于验证码。
 
@@ -70,7 +67,37 @@ sh -c '
 
 ## 判断结果
 
-batch 完成后重新执行 `snapshot -i -c` 和 `get url`。同时满足登录表单消失，并出现账号信息、已登录导航或业务首页等明确证据时，才报告登录成功。不能只凭 URL 变化或按钮已点击判断成功。
+batch 完成后重新执行 `snapshot -i -c` 和 `get url`。同时满足登录表单消失，并出现账号信息、已登录导航或业务首页等明确证据时，才报告登录成功。不能只凭 batch 或 click 返回成功、URL 变化或按钮已点击判断成功。
+
+## 提交按钮无响应
+
+`agent-browser click` 返回成功只表示浏览器完成了点击动作，不表示页面监听器、登录请求或前端路由已经触发。点击后仍停留在登录页且没有提示时：
+
+1. 重新获取快照，确认登录按钮仍是同一个元素、处于 enabled 状态，并排除遮罩、弹窗、未勾选协议和浏览器原生表单校验。
+2. 查看刚清空后捕获的 `xhr`、`fetch` 和 `document` 请求。已经出现登录请求时不得再次点击；继续等待响应并按页面或响应状态判断。
+3. 页面无变化、没有校验提示且没有登录请求时，才把它判定为点击未生效。为按钮确定只匹配一个元素的 CSS selector，并用 `get count` 验证结果为 `1`。
+4. 只对这个已确认的登录按钮执行一次原生 `MouseEvent`。脚本不得读取输入框值、Cookie、token 或网页存储，也不得直接调用页面内部登录函数：
+
+```bash
+/opt/hermes/node_modules/.bin/agent-browser \
+  --session website-login-7f3a2c eval --stdin <<'JS'
+const buttons = document.querySelectorAll('button.login-button');
+if (buttons.length !== 1) {
+  throw new Error(`登录按钮匹配数量不是 1：${buttons.length}`);
+}
+const button = buttons[0];
+if (button.disabled || button.getAttribute('aria-disabled') === 'true') {
+  throw new Error('登录按钮不可用');
+}
+button.dispatchEvent(new MouseEvent('click', {
+  bubbles: true,
+  cancelable: true,
+  view: window,
+}));
+JS
+```
+
+把示例 selector 换成当前页面已验证的 selector。派发后等待页面稳定，再检查 URL、快照和网络请求；仍无请求或页面变化时停止，不连续改用 `.click()`、回车、坐标点击或重复派发。
 
 如果是 `website-automation` 调用，立即把会话交还给调用方，不关闭。用户只要求登录时保留会话，以便当前对话继续操作；确定终止或用户要求退出时再执行 `agent-browser --session <会话名> close`。
 
@@ -80,10 +107,10 @@ batch 完成后重新执行 `snapshot -i -c` 和 `get url`。同时满足登录�
 
 ### 截取目标元素
 
-1. 用 `snapshot -i -c` 确认验证码、输入框和刷新控件的位置。不要把页面中第一个图片当作验证码。
-2. 如果快照无法唯一定位，只用 `eval` 枚举 `img, canvas` 的 `tagName`、`id`、class、`alt`、截断后的 `src`、尺寸和可见性；不得读取表单 `value`、Cookie、token 或网页存储。
-3. 为验证码确定唯一 CSS selector。页面变化或验证码刷新后重新确认，不复用旧 ref、旧 selector、旧图片或旧识别结果。
-4. 使用元素截图直接保存到当前 profile 的 `tmp/`，文件名唯一且不包含识别结果：
+1. 用 `snapshot -i -c` 先确认验证码输入框和刷新控件。验证码图形可能绘制在 `<canvas>`，不会出现在交互快照中；不要假定它是 `<img>`，也不要截取页面第一个图片。
+2. 如果快照无法显示图形元素，只用 `eval` 枚举可见的 `img, canvas`，输出 `tagName`、`id`、class、`alt`、截断后的 `src`、尺寸，以及父级元素的 `id` 和 class。结合它与验证码输入框、刷新控件的共同容器和相对位置判断；不得只按标签类型或出现顺序选择，不得读取表单 `value`、Cookie、token 或网页存储。
+3. 为验证码图形确定 CSS selector 后，用 `get count` 确认只匹配一个元素，再用 `get box` 检查尺寸和位置。常见结构可以是 `div.code canvas`，但只能在当前页面验证唯一后使用。
+4. 优先截图图形元素本身：canvas 验证码截取 `canvas`，img 验证码截取 `img`；不要截取包含无关图片、文字或按钮的外层容器。直接保存到当前 profile 的 `tmp/`，文件名唯一且不包含识别结果：
 
 ```bash
 export HERMES_DOCK_PROFILE_HOME="/opt/data"
@@ -108,11 +135,15 @@ export HERMES_DOCK_PROFILE_HOME="/opt/data"
   "$HERMES_DOCK_PROFILE_HOME/tmp/website-login-captcha-7f3a2c.png"
 ```
 
-只有 `success: true` 且 `textFound: true` 时才使用 `text`。识别结果必须符合页面标明的位置、长度和字符类型；只可去掉首尾空格，不得纠正、补全或猜测。
+只有 `success: true` 且 `textFound: true` 时才把 `text` 作为候选结果。ddddocr 不是正确性证明；结果必须符合页面标明的长度和字符类型，只可去掉首尾空格，不得纠正、补全或猜测。结果模糊、字符类型异常或用户已经提供人工识别结果时，不得用 OCR 猜测值覆盖用户结果。
 
-算术题必须先确认完整表达式，再人工按括号及先乘除后加减计算结果。只接受数字、括号和 `+`、`-`、`×`、`x`、`*`、`÷`、`/`；不得使用 `eval`、shell 或网页脚本计算。字符不清、除数为零或结果格式不确定时刷新后重新识别。
+提交前必须先分类候选结果：
 
-识别完成后，通过“安全传递凭据”的单个 batch 同时填写账号、密码、验证码并点击提交。每次刷新都使用新截图；最多处理三个新图片且最多提交三次。只有 batch 实际提交后网站明确拒绝验证码才计一次；JSON、EOF、中继或其他本地输入失败不计次数，也不得因此刷新验证码。OCR 不可用、输出无效或达到上限时停止，不得编造答案。
+- 纯字符验证码：填写识别出的字符。
+- 含算术运算符的验证码：把它视为表达式，先确认完整内容，再人工按括号及先乘除后加减计算，只填写最终数值；例如识别为 `77-62` 时填写 `15`，绝不能填写 `77-62`。
+- 只接受数字、括号和 `+`、`-`、`×`、`x`、`*`、`÷`、`/`；不得使用 `eval`、shell 或网页脚本计算。字符不清、除数为零或结果格式不确定时，不提交猜测值。
+
+识别完成后，通过“安全传递凭据”的单个 batch 同时填写账号、密码、最终验证码答案并点击提交。网站首次明确拒绝验证码后，不得重复使用原图片或原结果；截取当前验证码重新识别。OCR 仍不确定时，把当前验证码图片复制到共享目录并请用户识别，等待用户结果，不要盲目刷新。每次刷新都使用新截图；最多处理三个新图片且最多提交三次。只有 batch 实际提交后网站明确拒绝验证码才计一次；JSON、EOF、管道或点击未生效不计次数，也不得因此刷新验证码。OCR 不可用、输出无效或达到上限时停止，不得编造答案。
 
 登录成功或流程终止后，只删除本任务创建的验证码图片，不清理整个 `tmp/`。
 
