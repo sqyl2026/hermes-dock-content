@@ -39,25 +39,32 @@ description: 使用镜像内置的 agent-browser 安全登录网站。适用于�
 按以下方式执行：
 
 1. 先用快照确认唯一定位方式，并在提交前确认 origin。
-2. 用 `terminal(background=true, pty=false)` 启动下列固定命令：
+2. 用 `terminal(background=true, pty=false)` 启动下列固定的完整行中继。命令本身不得包含真实凭据或待执行的 JSON：
 
 ```bash
-/opt/hermes/node_modules/.bin/agent-browser \
-  --session website-login-7f3a2c --json batch --bail
+sh -c '
+  IFS= read -r payload || exit 64
+  printf "%s\n" "$payload" |
+    /opt/hermes/node_modules/.bin/agent-browser \
+      --session website-login-7f3a2c --json batch --bail
+'
 ```
 
-3. 用 `process(action="write")` 把 JSON 命令数组写入该进程。使用语义定位或已确认的 selector；下面的值只表示结构，实际值由用户提供：
+3. 构造一个语法完整且不含实际换行的单行 JSON 命令数组。字符串中的换行等特殊字符按 JSON 规则转义。使用语义定位或已确认的 selector；下面的值只表示结构，实际值由用户提供：
 
 ```json
-[
-  ["find", "label", "用户名", "fill", "<用户名>"],
-  ["find", "label", "密码", "fill", "<密码>"],
-  ["find", "role", "button", "click", "--name", "登录"]
-]
+[["find","label","用户名","fill","<用户名>"],["find","label","密码","fill","<密码>"],["find","role","button","click","--name","登录"]]
 ```
 
-4. 用 `process(action="close")` 发送 EOF，再用 `process(action="wait")` 等待完成。凭据写入期间不要调用 `process log`，不要在结果中复述输入值。
-5. 需要图片验证码时，先完成识别，再把账号、密码、验证码和提交动作放进同一个 batch，避免提交前验证码刷新。
+4. 只调用一次 `process(action="write", session_id="<上一步返回的进程 ID>", data="<单行完整 JSON 数组>\n")`，把整个数组连同唯一的末尾换行一次写入；不得分片，不得在 JSON 中加入实际换行，也不得省略末尾换行。随后直接调用同一进程的 `process(action="wait")`。中继会在读到换行后向 `agent-browser` 发送完整 JSON 并自动结束其标准输入；不要调用 `process close` 制造 EOF。
+5. 不得把含真实凭据的 JSON 改写成 `echo '<JSON>' | agent-browser ...`、here-document 或 `printf '<JSON>'` 终端命令。凭据写入期间不要调用 `process log`，不要在结果中复述输入值。
+6. 需要图片验证码时，先完成识别，再把账号、密码、验证码和提交动作放进同一个 batch，避免提交前验证码刷新。
+
+把输入通道错误与网站拒绝分开判断：
+
+- `Invalid JSON input`、`EOF while parsing`、batch 解析失败或中继进程在浏览器动作执行前退出，属于本地输入格式或传输失败，不证明账号、密码或验证码错误。不要刷新验证码，不计入验证码提交次数；先修正为“单行完整 JSON + 唯一的末尾换行 + 单次 write”，再用快照和 URL 检查页面是否变化。页面未变化时复用当前验证码；无法确认时重新截取当前验证码元素并识别，但不要主动点击刷新。
+- batch 已成功执行提交，且页面明确显示“验证码错误”“验证码过期”或等价提示，才按验证码失败处理并计入一次提交。
+- 页面明确显示账号或密码错误、账号锁定、权限不足或风控拒绝时，按对应错误处理，不得归因于验证码。
 
 同一凭据出现账号或密码错误、账号锁定、权限不足或风控拒绝时立即停止；不得自动重复提交。
 
@@ -88,6 +95,8 @@ export HERMES_DOCK_PROFILE_HOME="/opt/data"
 
 非 default profile 使用 `/opt/data/profiles/<id>`。每次终端调用都显式设置 `HERMES_DOCK_PROFILE_HOME`。截图失败时说明真实限制；不要改为整页 OCR、重新请求验证码 URL、读取网络凭据或绕过浏览器安全策略。
 
+这里的 `tmp/` 截图只用于内部 OCR，不得直接通过 `MEDIA:` 交付。用户需要查看验证码、二维码或其他登录图片时，把要交付的那一张以唯一文件名保存或复制到 `/opt/data/.dock/shared/`，确认文件存在且非空后再发送；不要覆盖已有文件。
+
 ### 识别与填写
 
 读取并遵循当前 profile 的 `skills/productivity/captcha-ocr/SKILL.md`，只把刚截取的验证码图片交给其 `run_ocr.py`：
@@ -103,7 +112,7 @@ export HERMES_DOCK_PROFILE_HOME="/opt/data"
 
 算术题必须先确认完整表达式，再人工按括号及先乘除后加减计算结果。只接受数字、括号和 `+`、`-`、`×`、`x`、`*`、`÷`、`/`；不得使用 `eval`、shell 或网页脚本计算。字符不清、除数为零或结果格式不确定时刷新后重新识别。
 
-识别完成后，通过“安全传递凭据”的单个 batch 同时填写账号、密码、验证码并点击提交。每次刷新都使用新截图；最多处理三个新图片且最多提交三次。网站提示验证码错误也计一次。OCR 不可用、输出无效或达到上限时停止，不得编造答案。
+识别完成后，通过“安全传递凭据”的单个 batch 同时填写账号、密码、验证码并点击提交。每次刷新都使用新截图；最多处理三个新图片且最多提交三次。只有 batch 实际提交后网站明确拒绝验证码才计一次；JSON、EOF、中继或其他本地输入失败不计次数，也不得因此刷新验证码。OCR 不可用、输出无效或达到上限时停止，不得编造答案。
 
 登录成功或流程终止后，只删除本任务创建的验证码图片，不清理整个 `tmp/`。
 
@@ -112,7 +121,7 @@ export HERMES_DOCK_PROFILE_HOME="/opt/data"
 遇到短信、邮件、身份验证器动态口令、扫码或手机确认时：
 
 1. 只触发一次发送验证码或展示验证页面，不自动重复发送。
-2. 告诉用户当前需要的验证类型并暂停。页面显示脱敏接收地址时可以转述，不推测完整地址。需要扫码时只截取二维码元素，并按 `SOUL.md` 的文件交付规则提供图片。
+2. 告诉用户当前需要的验证类型并暂停。页面显示脱敏接收地址时可以转述，不推测完整地址。需要扫码时只截取二维码元素，以唯一文件名保存到 `/opt/data/.dock/shared/`，确认文件存在且非空后，按 `SOUL.md` 的文件交付规则使用该路径提供图片；不得从当前 profile 的 `tmp/` 直接交付。
 3. 用户提供验证码或确认完成后，先用同一会话执行 `snapshot -i -c`。把验证码通过 batch 标准输入填写并提交，不得猜测、枚举或复用验证码。
 4. 验证码被拒绝时说明实际错误。是否重新发送或再试由用户决定。
 
