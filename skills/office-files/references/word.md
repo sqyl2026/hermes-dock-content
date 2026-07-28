@@ -1,6 +1,6 @@
 # Word（python-docx 与 OOXML）
 
-依赖：`python-docx`，Python 中使用 `import docx`；生成原生批注时要求 `python-docx>=1.2.0`。先阅读 `../SKILL.md` 和 `word-common.md`。`python-docx` 没有覆盖修订、动态目录等全部 Word 功能；需要时通过它提供的 OOXML 元素操作 WordprocessingML，不要改写整个 ZIP 包。
+依赖：`python-docx`，Python 中使用 `import docx`；生成原生批注时要求 `python-docx>=1.2.0`。先阅读 `../SKILL.md` 和 `word-common.md`。`python-docx` 没有覆盖修订等全部 Word 功能；需要时通过它提供的 OOXML 元素操作 WordprocessingML，不要改写整个 ZIP 包。目录任务改读 `word-toc.md` 并使用技能 helper。
 
 ## 目录
 
@@ -12,7 +12,6 @@
 - [处理已有修订](#处理已有修订)
 - [生成 DOCX 原生批注](#生成-docx-原生批注)
 - [局部和全局字体格式](#局部和全局字体格式)
-- [生成标准目录](#生成标准目录)
 - [局部和全局行间距](#局部和全局行间距)
 - [提取图片](#提取图片)
 - [创建文档](#创建文档)
@@ -607,76 +606,6 @@ def set_style_fonts(style, latin: str, east_asia: str | None = None) -> None:
 
 如果要求以修订模式记录字体变化，先保存旧 `w:rPr`，再按“格式修订”规则写入 `w:rPrChange`；不能只修改当前格式后声称已经留痕。
 
-## 生成标准目录
-
-标准目录应使用 Word 原生 TOC 域，不能把标题和猜测的页码拼成普通文本。
-
-### 准备标题
-
-- 目录来源段落优先使用内置 `Heading 1`～`Heading 9` 样式。
-- 自定义样式只有设置正确 outline level，或 TOC 指令显式包含样式映射时才会进入目录。
-- 创建自定义标题样式时使用 `style.element.get_or_add_pPr().get_or_add_outlineLvl()` 设置 `w:val`；`Heading 1` 对应 `0`、`Heading 2` 对应 `1`，依次类推。
-- 目录标题“目录”本身不能使用会被目录收录的 Heading 样式。优先使用 `TOC Heading`；不存在时使用不带 outline level 的普通样式并单独设置外观。
-- 插入前检查现有 `w:instrText`，发现已有 `TOC` 域时不要重复添加；用户要求替换时必须定位完整的 begin/separate/end 域范围。
-
-### 插入动态 TOC 域
-
-下面的 `paragraph` 是已经放在用户指定位置的空目录段落：
-
-```python
-def append_toc_field(paragraph, levels: str = "1-3") -> None:
-    if not levels or "-" not in levels:
-        raise ValueError("目录级别应类似 1-3")
-
-    begin_run = paragraph.add_run()._r
-    begin = OxmlElement("w:fldChar")
-    begin.set(qn("w:fldCharType"), "begin")
-    begin.set(qn("w:dirty"), "true")
-    begin_run.append(begin)
-
-    instruction_run = paragraph.add_run()._r
-    instruction = OxmlElement("w:instrText")
-    instruction.set(XML_SPACE, "preserve")
-    instruction.text = f' TOC \\o "{levels}" \\h \\z \\u '
-    instruction_run.append(instruction)
-
-    separate_run = paragraph.add_run()._r
-    separate = OxmlElement("w:fldChar")
-    separate.set(qn("w:fldCharType"), "separate")
-    separate_run.append(separate)
-
-    paragraph.add_run("请在 Word/WPS 中更新目录")
-
-    end_run = paragraph.add_run()._r
-    end = OxmlElement("w:fldChar")
-    end.set(qn("w:fldCharType"), "end")
-    end_run.append(end)
-
-
-def request_field_update_on_open(document) -> None:
-    settings = document.settings.element
-    update = settings.find(qn("w:updateFields"))
-    if update is None:
-        update = OxmlElement("w:updateFields")
-        settings.append(update)
-    update.set(qn("w:val"), "true")
-
-
-def contains_toc(document) -> bool:
-    for paragraph in document.element.body.iter(qn("w:p")):
-        instruction = "".join(
-            element.text or "" for element in paragraph.iter(qn("w:instrText"))
-        )
-        instruction = " ".join(instruction.split()).upper()
-        if instruction == "TOC" or instruction.startswith("TOC "):
-            return True
-    return False
-```
-
-常用指令 `TOC \\o "1-3" \\h \\z \\u` 表示收录 1～3 级标题、生成超链接、在 Web 布局隐藏制表符和页码，并使用段落 outline level。用户指定其他级别时调整 `\\o`。
-
-将目录标题和域插入到封面后、正文前或用户指定锚点。需要分页时显式插入分页符，不要依赖空行。插入后设置 `w:updateFields`，但必须告知用户：`python-docx` 不负责分页，也不能计算真实页码；Word/WPS 是否自动更新域取决于客户端设置，必要时打开文档后选择“更新整个目录”。没有排版引擎刷新前，占位文字不是错误，也不能声称页码已经生成。
-
 ## 局部和全局行间距
 
 行距属于段落属性，不能只修改一个字符或 run。按文本定位时，修改命中文本所在的完整段落，并先向用户说明这一点。
@@ -770,7 +699,7 @@ def extract_images():
 
 ## 创建文档
 
-创建新文档时同时读取 `word-layout.md`，先确定页面和视觉约束，再定义标题、正文和表格样式。需要目录时先为章节应用内置 Heading 样式，然后按“生成标准目录”插入 TOC 域。
+创建新文档时同时读取 `word-layout.md`，先确定页面和视觉约束，再定义标题、正文和表格样式。需要目录时读取 `word-toc.md`，并使用技能 helper 插入和验证原生 TOC 域。
 
 以下代码只演示安全的创建顺序，不代表完整排版配方：
 
@@ -814,7 +743,7 @@ def main():
 5. 对行距读取 `line_spacing`、`line_spacing_rule`、`space_before` 和 `space_after`。
 6. 对修订检查 `word/document.xml` 及涉及的页眉页脚 part，确认目标 `w:id`、作者、时间、`w:ins/w:del` 或属性 change 存在，其他修订未变化。
 7. 对批注检查 `word/comments.xml`、document relationship、Content Type，以及相同 ID 的 `commentRangeStart/commentRangeEnd/commentReference`；重新打开后核对批注正文和作者。
-8. 对目录检查完整的 begin/instrText/separate/end 域结构和 `word/settings.xml` 中的 `w:updateFields`。
+8. 对目录使用 `word-toc.md` 的 helper 检查完整的 begin/instrText/separate/end 域结构、标题 outline level 和 `word/settings.xml` 中的 `w:updateFields`。
 9. 检查任务涉及的内部 relationship Target 存在，新增 ID 不与既有书签、批注、drawing、编号或修订 ID 冲突。
 10. 比较基线；每项结构变化都必须能对应到用户请求。未知对象减少、关系断裂、非目标内容变化或无法解释的计数差异视为失败。
 11. 验证失败时删除本次新建的不完整输出；保留脚本并报告真实错误。

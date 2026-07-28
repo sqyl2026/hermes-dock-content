@@ -1,6 +1,6 @@
 ---
 name: office-files
-description: "在 Hermes 容器中读取、提取、分析、修改、创建、校验或转换 Word `.docx`、Excel `.xlsx`、CSV 和 TSV 文件，包括 Word 审阅修订、原生批注、字体与段落格式、目录、行距、正式文档排版、套用模板，以及 Excel 数据清洗、公式、格式、表格、静态结构校验和从表格数据生成带中文标签的图表图片。适用于用户明确提到 Word、DOCX、XLSX、CSV、TSV、Excel、spreadsheet、工作簿、电子表格或其他 Office 文件，以及明确要求最终交付 Word/DOCX 的报告、合同、公文、提案和表单；在 Word/DOCX 上下文中还包括修订、原生批注、字体、目录、行间距和套模板。不用于一般代码注释或文章点评，也不用于 PowerPoint/PPTX、PDF、OCR 或旧版 `.doc`/`.xls` 文件；这些任务使用对应专用技能。"
+description: "在 Hermes 容器中读取、提取、分析、修改、创建、校验或转换 Word `.docx`、Excel `.xlsx`、CSV 和 TSV 文件，包括 Word 审阅修订、原生批注、字体与段落格式、原生可更新目录、行距、正式文档排版、套用模板，以及 Excel 数据清洗、公式、格式、表格、静态结构校验和从表格数据生成带中文标签的图表图片。适用于用户明确提到 Word、DOCX、XLSX、CSV、TSV、Excel、spreadsheet、工作簿、电子表格或其他 Office 文件，以及明确要求最终交付 Word/DOCX 的报告、合同、公文、提案和表单；在 Word/DOCX 上下文中还包括修订、原生批注、目录、自动目录、可更新目录、目录页、字体、行间距和套模板。不用于一般代码注释或文章点评，也不用于 PowerPoint/PPTX、PDF、OCR 或旧版 `.doc`/`.xls` 文件；这些任务使用对应专用技能。"
 ---
 
 # Word、Excel、CSV 和 TSV 文件处理
@@ -11,8 +11,9 @@ description: "在 Hermes 容器中读取、提取、分析、修改、创建、�
 
 - 所有 Word `.docx` 任务：读取 `references/word-common.md`
 - 读取或修改现有 Word，包括内容替换、审阅修订、原生批注、字体、目录、行距、标题或其他格式修改：额外读取 `references/word.md`
-- 从零创建 Word 或在没有模板时统一视觉排版：额外读取 `references/word-layout.md`；需要目录、修订或批注时再读取 `references/word.md`
-- 存在独立模板文件，或明确以另一份文档作为格式来源时：额外读取 `references/word-template.md`；需要替换跨 run 占位符、保留审阅对象或修改复杂域时再读取 `references/word.md`
+- 从零创建 Word 或在没有模板时统一视觉排版：额外读取 `references/word-layout.md`；需要修订或批注时再读取 `references/word.md`
+- 存在独立模板文件，或明确以另一份文档作为格式来源时：额外读取 `references/word-template.md`；需要替换跨 run 占位符、保留审阅对象或修改其他复杂域时再读取 `references/word.md`
+- 任何目录、自动目录、可更新目录或目录页任务：额外读取 `references/word-toc.md`，并使用 `scripts/word_toc.py`
 - 所有 Excel `.xlsx`、CSV 和 TSV 任务：读取 `references/excel.md` 和 `references/excel-common.md`
 - 读取、提取、分析或检查数据：额外读取 `references/excel-read.md`
 - 从 `.xlsx`、CSV 或 TSV 数据生成 PNG 等静态图表图片：额外读取 `references/excel-chart.md`
@@ -55,6 +56,7 @@ description: "在 Hermes 容器中读取、提取、分析、修改、创建、�
 - “正文”包含正文段落及其嵌套表格；“全文”“全局”或“整个文档”还包含所有不同的页眉和页脚。文本框、脚注、尾注、批注等未覆盖对象必须明确报告。
 - 不通过重写 `paragraph.text` 或合并全部 run 来处理复杂文档。文本跨 run 时建立字符位置到 run/XML 节点的映射，保留未命中的格式、超链接、书签和修订结构。
 - 套用模板前区分纯样式模板和带封面、目录、分节或占位内容的结构模板；复杂结构模板优先以模板副本作为输出基底，不从空白文档重建。
+- 用户要求目录、自动目录、可更新目录或目录页时，默认创建 Word 原生 `TOC` 域；禁止用普通段落、制表符、点线和猜测页码模拟目录。只有用户明确要求静态文本目录时才允许生成普通文本目录。
 - 保存后重新打开 DOCX；修订、目录和复杂格式还要检查包内 OOXML。报告命中数量、实际范围、未覆盖对象，以及目录是否仍需在 Word/WPS 中刷新。
 
 ## Excel 修改规则
