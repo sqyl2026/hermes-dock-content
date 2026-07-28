@@ -34,7 +34,9 @@ description: 使用镜像内置的 agent-browser 登录网站、观察真实网�
 
 用户已经明确要求的查询、筛选、导出和普通业务操作无需逐步确认。付款、删除、发布、发消息、授权、账号变更等难以撤销且未被用户明确要求的动作，在最终提交前确认。
 
-登录阶段不得自行按输入框顺序猜测字段，不得通过整页截图、同步 XHR、`fetch` 或重新请求图片 URL 获取验证码，也不得为了刷新验证码直接重新加载登录页。出现 `Invalid JSON input`、`EOF while parsing` 或 batch 解析失败时，把它视为本地输入通道失败，不得误判为验证码错误、刷新验证码或消耗验证码提交次数。按 `website-login` 的单次前台 `printf` 管道修正输入。click 返回成功但没有页面变化时也不代表提交成功；按该技能检查网络请求，并只在确认请求未发出后使用一次原生 `MouseEvent`。
+登录阶段不得自行按输入框顺序猜测字段，也不得使用不存在的 `find id` 或 `find css`。`find` 只用于受支持的语义定位；CSS selector 和当前快照 ref 应直接传给 `fill`、`click`、`focus` 等动作命令。不得用含账号、密码或验证码的 DOM `eval` 填写表单；页面框架未识别标准 `fill` 时，按 `website-login` 依次尝试 `fill` 后 `press Tab`、唯一 selector 上的 `focus` + `Control+a` + `keyboard type` + `press Tab`，仍失败就停止。
+
+不得通过整页截图、同步 XHR、`fetch` 或重新请求图片 URL 获取验证码，也不得为了刷新验证码直接重新加载登录页。出现 `Invalid JSON input`、`EOF while parsing`、`Unknown locator` 或 batch 解析失败时，把它视为本地命令或输入通道失败，不得误判为验证码错误、刷新验证码或消耗验证码提交次数。按 `website-login` 的单次前台 `printf` 管道和精确定位语法修正输入。click 返回成功但没有页面变化时也不代表提交成功；按该技能检查网络请求，并只在确认请求未发出后使用一次不含凭据的原生 `MouseEvent`。
 
 ## 安全观察请求
 

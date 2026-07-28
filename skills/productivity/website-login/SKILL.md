@@ -38,6 +38,24 @@ description: 使用镜像内置的 agent-browser 安全登录网站。适用于�
 3. 用 `get count` 确认每个 selector 只匹配一个元素。字段用途或 selector 仍有歧义时停止并询问用户，不试填凭据。
 4. batch 的填写顺序必须来自字段映射，不得按 DOM 顺序猜测。页面重新加载或动态重绘表单后，旧 ref 和映射全部失效，重新映射。
 
+### 使用正确的 batch 定位语法
+
+`find` 只接受 `role`、`text`、`label`、`placeholder`、`alt`、`title`、`testid`、`first`、`last` 和 `nth`。不存在 `find id` 或 `find css`。账号、密码和验证码不得使用 `first`、`last` 或 `nth`，除非页面语义和唯一性已经单独确认。
+
+根据字段映射选择一种语法：
+
+```json
+[["find","label","手机号","fill","<手机号>"],["find","placeholder","请输入密码","fill","<密码>"],["find","role","button","click","--name","登录"]]
+```
+
+CSS selector 和快照 ref 不经过 `find`，直接传给动作命令：
+
+```json
+[["fill","#phone","<手机号>"],["fill","input[type='password']","<密码>"],["fill","@e3","<验证码>"],["click","button[type='submit']"]]
+```
+
+`#id`、`.class`、`input[name='phone']` 等都是 CSS selector，必须使用 `fill <selector> <text>`、`click <selector>`、`focus <selector>` 等直接命令。batch 返回 `Unknown locator` 或类似错误时先修正语法；不得改用 DOM `eval` 填写凭据。
+
 示例仅表示命令结构：
 
 ```bash
@@ -72,6 +90,26 @@ printf '%s\n' '<单行完整 JSON 数组>' |
 4. 不使用 `echo`，避免反斜杠、`-n` 和不同 shell 行为改变 JSON。不要输出实际命令、调用进程日志或在结果中复述输入值。
 5. 需要图片验证码时，先完成识别和算术处理，再把账号、密码、最终验证码答案和提交动作放进同一个 batch，避免提交前验证码刷新。
 6. 提交前执行 `network requests --clear`。batch 返回后立即检查 URL、快照和 `network requests --type xhr,fetch,document`，区分“点击命令执行”“登录请求发出”和“网站接受登录”三个不同状态。
+
+### 输入未被表单识别
+
+标准 `fill` 会触发输入事件。页面仍提示“请输入”时，先确认字段映射和 locator 正确；不得读取 `value`，也不得用 `eval` 执行 `element.value = ...` 或把账号、密码、验证码写进网页脚本。
+
+只在确认登录请求尚未发出、验证码没有刷新时按顺序降级：
+
+1. 对未被识别的字段重新执行 `fill`，紧接 `press Tab` 触发 `change` 和 `blur`，并在同一个 batch 中完成其余字段和提交：
+
+```json
+[["fill","#phone","<手机号>"],["press","Tab"],["fill","#password","<密码>"],["press","Tab"],["fill","#captcha","<验证码>"],["press","Tab"],["click","#login"]]
+```
+
+2. 仍未识别时，只再尝试一次真实键盘输入：先 `focus` 唯一 selector，再 `press Control+a`、`keyboard type` 和 `press Tab`。凭据仍只存在于 batch 标准输入：
+
+```json
+[["focus","#phone"],["press","Control+a"],["keyboard","type","<手机号>"],["press","Tab"],["focus","#password"],["press","Control+a"],["keyboard","type","<密码>"],["press","Tab"],["focus","#captcha"],["press","Control+a"],["keyboard","type","<验证码>"],["press","Tab"],["click","#login"]]
+```
+
+3. 仍提示未输入时停止，报告该页面的自定义输入组件与现有交互命令不兼容；不得继续用带凭据的 DOM `eval`、事件脚本或重复提交。
 
 把输入通道错误与网站拒绝分开判断：
 
