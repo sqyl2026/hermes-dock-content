@@ -22,6 +22,22 @@ description: 使用镜像内置的 agent-browser 安全登录网站。适用于�
 3. 输入凭据前用 `get url` 核对当前 origin。只把凭据提交给用户指定站点，或正常跳转到的明确官方认证域名；域名可疑或无法判断时停止并请用户确认。
 4. 优先使用用户提供凭据对应的登录方式。不要自行改用短信、扫码或第三方登录，也不要勾选“记住密码”或“保持登录”。
 
+### 映射登录表单
+
+输入任何凭据前，先建立并保留本次页面状态的字段映射：
+
+```text
+账号或手机号 → 唯一 selector
+密码         → 唯一 selector
+验证码       → 唯一 selector
+登录按钮     → 唯一 selector
+```
+
+1. 优先依据 label、placeholder、role、`type`、`name`、`id`、`autocomplete` 和 `aria-label` 判断用途。密码框应有 `type=password`；手机号框与验证码框必须结合页面文字、placeholder 和所在容器区分。
+2. 快照信息不足时，只用 `eval` 枚举 `input`、`button` 的上述元数据、可见性和关联 label；不得读取或输出 `value`，不得把页面中第一个、第二个、第三个输入框直接假定为账号、密码、验证码。
+3. 用 `get count` 确认每个 selector 只匹配一个元素。字段用途或 selector 仍有歧义时停止并询问用户，不试填凭据。
+4. batch 的填写顺序必须来自字段映射，不得按 DOM 顺序猜测。页面重新加载或动态重绘表单后，旧 ref 和映射全部失效，重新映射。
+
 示例仅表示命令结构：
 
 ```bash
@@ -120,7 +136,57 @@ export HERMES_DOCK_PROFILE_HOME="/opt/data"
   "$HERMES_DOCK_PROFILE_HOME/tmp/website-login-captcha-7f3a2c.png"
 ```
 
-非 default profile 使用 `/opt/data/profiles/<id>`。每次终端调用都显式设置 `HERMES_DOCK_PROFILE_HOME`。截图失败时说明真实限制；不要改为整页 OCR、重新请求验证码 URL、读取网络凭据或绕过浏览器安全策略。
+非 default profile 使用 `/opt/data/profiles/<id>`。每次终端调用都显式设置 `HERMES_DOCK_PROFILE_HOME`。确认截图文件存在且非空；不得改为整页 OCR、重新请求验证码 URL、使用同步 XHR 或读取网络凭据。
+
+### 刷新验证码
+
+需要新验证码时，优先点击验证码图片或页面专用刷新按钮，只更新验证码区域；不要为了换验证码直接执行 `reload` 或重新 `open` 登录页。等待图形更新后重新截图和识别，不复用旧图片或旧答案。只有页面没有局部刷新机制，或者验证码区域已经失效时才重新加载登录页；重新加载后必须重新映射全部字段。
+
+### 元素截图降级
+
+元素截图命令失败、图片为空或明显空白时，只对已经唯一确认的验证码元素执行以下降级：
+
+1. `<img>` 只接受其当前 `src` 或 `currentSrc` 已经是 `data:image/...;base64,...` 的情况。
+2. `<canvas>` 只调用该元素自身的 `toDataURL("image/png")`。
+3. 不使用 XHR、`fetch`、Cookie、token、网络请求详情或重新请求图片 URL。
+4. 用 `agent-browser --json eval` 返回 data URL，并立即通过本技能的 `save_data_url.py` 校验 MIME、base64、文件签名、大小和当前 profile 路径后落盘：
+
+```bash
+export HERMES_DOCK_PROFILE_HOME="/opt/data"
+/opt/hermes/node_modules/.bin/agent-browser \
+  --session website-login-7f3a2c --json eval --stdin <<'JS' \
+  | /opt/hermes/.venv/bin/python \
+    "$HERMES_DOCK_PROFILE_HOME/skills/productivity/website-login/scripts/save_data_url.py" \
+    "$HERMES_DOCK_PROFILE_HOME/tmp/website-login-captcha-7f3a2c.png"
+(() => {
+  const selector = 'div.code canvas';
+  const elements = document.querySelectorAll(selector);
+  if (elements.length !== 1) {
+    throw new Error(`验证码元素匹配数量不是 1：${elements.length}`);
+  }
+  const element = elements[0];
+  if (element instanceof HTMLCanvasElement) {
+    if (element.width <= 0 || element.height <= 0) {
+      throw new Error('验证码 canvas 尺寸无效');
+    }
+    return element.toDataURL('image/png');
+  }
+  if (element instanceof HTMLImageElement) {
+    if (!element.complete || element.naturalWidth <= 0 || element.naturalHeight <= 0) {
+      throw new Error('验证码图片尚未加载');
+    }
+    const source = element.currentSrc || element.src;
+    if (!/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(source)) {
+      throw new Error('验证码 img 不是受支持的 base64 data URL');
+    }
+    return source;
+  }
+  throw new Error('验证码元素不是 img 或 canvas');
+})()
+JS
+```
+
+把示例 selector 和输出扩展名替换为当前页面已验证的值；PNG 使用 `.png`，JPEG 使用 `.jpg` 或 `.jpeg`，GIF 使用 `.gif`，WebP 使用 `.webp`。脚本拒绝覆盖已有文件，每次使用唯一文件名。data URL 降级仍失败时，把当前元素截图复制到共享目录请用户识别，不再尝试其他 JS 抓取方法。
 
 这里的 `tmp/` 截图只用于内部 OCR，不得直接通过 `MEDIA:` 交付。用户需要查看验证码、二维码或其他登录图片时，把要交付的那一张以唯一文件名保存或复制到 `/opt/data/.dock/shared/`，确认文件存在且非空后再发送；不要覆盖已有文件。
 
@@ -135,6 +201,8 @@ export HERMES_DOCK_PROFILE_HOME="/opt/data"
   "$HERMES_DOCK_PROFILE_HOME/tmp/website-login-captcha-7f3a2c.png"
 ```
 
+`run_ocr.py` 不要求可执行权限。出现 `Permission denied` 表示调用方式错误；不得直接执行脚本、不得 `chmod`，也不得改用 `python3` 或其他解释器，必须使用上面的 `/opt/hermes/.venv/bin/python` 和绝对脚本路径。
+
 只有 `success: true` 且 `textFound: true` 时才把 `text` 作为候选结果。ddddocr 不是正确性证明；结果必须符合页面标明的长度和字符类型，只可去掉首尾空格，不得纠正、补全或猜测。结果模糊、字符类型异常或用户已经提供人工识别结果时，不得用 OCR 猜测值覆盖用户结果。
 
 提交前必须先分类候选结果：
@@ -143,7 +211,9 @@ export HERMES_DOCK_PROFILE_HOME="/opt/data"
 - 含算术运算符的验证码：把它视为表达式，先确认完整内容，再人工按括号及先乘除后加减计算，只填写最终数值；例如识别为 `77-62` 时填写 `15`，绝不能填写 `77-62`。
 - 只接受数字、括号和 `+`、`-`、`×`、`x`、`*`、`÷`、`/`；不得使用 `eval`、shell 或网页脚本计算。字符不清、除数为零或结果格式不确定时，不提交猜测值。
 
-识别完成后，通过“安全传递凭据”的单个 batch 同时填写账号、密码、最终验证码答案并点击提交。网站首次明确拒绝验证码后，不得重复使用原图片或原结果；截取当前验证码重新识别。OCR 仍不确定时，把当前验证码图片复制到共享目录并请用户识别，等待用户结果，不要盲目刷新。每次刷新都使用新截图；最多处理三个新图片且最多提交三次。只有 batch 实际提交后网站明确拒绝验证码才计一次；JSON、EOF、管道或点击未生效不计次数，也不得因此刷新验证码。OCR 不可用、输出无效或达到上限时停止，不得编造答案。
+提交前确认字段映射仍有效、当前验证码图形没有刷新、答案来自当前图片，并且验证码准备完成后没有执行无关页面操作。然后通过“安全传递凭据”的单个 batch 按映射同时填写账号、密码、最终验证码答案并点击提交。
+
+网站首次明确拒绝验证码后，不得重复使用原图片或原结果；通过局部刷新取得新验证码，再截图和识别。OCR 仍不确定时，把当前验证码图片复制到共享目录并请用户识别，等待用户结果，不要盲目刷新。每次刷新都使用新截图；最多处理三个新图片且最多提交三次。只有 batch 实际提交后网站明确拒绝验证码才计一次；JSON、EOF、管道或点击未生效不计次数，也不得因此刷新验证码。OCR 不可用、输出无效或达到上限时停止，不得编造答案。
 
 登录成功或流程终止后，只删除本任务创建的验证码图片，不清理整个 `tmp/`。
 
