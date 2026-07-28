@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import zipfile
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ TRUE_VALUES = {"1", "on", "true"}
 @dataclass(frozen=True)
 class NativeTocValidation:
     instructions: tuple[str, ...]
+    field_kinds: tuple[str, ...]
     heading_count: int
     update_on_open: bool
 
@@ -41,6 +43,12 @@ class _OpenField:
     instruction_parts: list[str] = field(default_factory=list)
     has_separator: bool = False
     dirty: bool = False
+
+
+@dataclass(frozen=True)
+class _SimpleField:
+    instruction: str
+    has_result: bool
 
 
 def _is_on(value: str | None) -> bool:
@@ -140,13 +148,24 @@ def _toc_fields(root) -> tuple[list[_ComplexField], list[_OpenField], int]:
     return toc_fields, open_toc_fields, unmatched_ends
 
 
-def _simple_toc_instructions(root) -> tuple[str, ...]:
+def _simple_toc_fields(root) -> tuple[_SimpleField, ...]:
     return tuple(
-        _normalize_instruction(element.get(qn("w:instr")) or "")
+        _SimpleField(
+            instruction=_normalize_instruction(element.get(qn("w:instr")) or ""),
+            has_result=any(
+                bool((text.text or "").strip())
+                for text in element.iter(qn("w:t"))
+                if not _is_in_textbox(text)
+            ),
+        )
         for element in root.iter(qn("w:fldSimple"))
         if not _is_in_textbox(element)
         and _is_toc_instruction(element.get(qn("w:instr")) or "")
     )
+
+
+def _simple_toc_instructions(root) -> tuple[str, ...]:
+    return tuple(field.instruction for field in _simple_toc_fields(root))
 
 
 def _outline_level_from_properties(properties) -> int | None:
@@ -280,8 +299,58 @@ def request_field_update_on_open(document) -> None:
     update.set(qn("w:val"), "true")
 
 
+def _validate_field_kind(field_kind: str) -> str:
+    if field_kind not in {"simple", "complex"}:
+        raise ValueError("field_kind 必须是 simple 或 complex")
+    return field_kind
+
+
+def _validate_placeholder_format(font_name: str, size_pt: float) -> int:
+    if not font_name.strip():
+        raise ValueError("目录占位文字字体不能为空")
+    if (
+        isinstance(size_pt, bool)
+        or not isinstance(size_pt, (int, float))
+        or not math.isfinite(size_pt)
+        or size_pt <= 0
+    ):
+        raise ValueError("目录占位文字字号必须是正数")
+    half_points = round(size_pt * 2)
+    if half_points < 1:
+        raise ValueError("目录占位文字字号必须至少为 0.5pt")
+    return half_points
+
+
+def _run_properties(font_name: str, half_points: int) -> object:
+    properties = OxmlElement("w:rPr")
+    fonts = OxmlElement("w:rFonts")
+    for slot in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        fonts.set(qn(slot), font_name)
+    properties.append(fonts)
+
+    size = OxmlElement("w:sz")
+    size.set(qn("w:val"), str(half_points))
+    properties.append(size)
+    complex_size = OxmlElement("w:szCs")
+    complex_size.set(qn("w:val"), str(half_points))
+    properties.append(complex_size)
+    return properties
+
+
 def _run_with_child(child) -> object:
     run = OxmlElement("w:r")
+    run.append(child)
+    return run
+
+
+def _formatted_run_with_child(
+    child,
+    *,
+    font_name: str,
+    half_points: int,
+) -> object:
+    run = OxmlElement("w:r")
+    run.append(_run_properties(font_name, half_points))
     run.append(child)
     return run
 
@@ -292,10 +361,18 @@ def append_native_toc(
     *,
     title_paragraph: Paragraph,
     levels: tuple[int, int] = (1, 3),
+    field_kind: str = "simple",
     placeholder: str = "请在 Word/WPS 中更新整个目录",
+    placeholder_font: str = "宋体",
+    placeholder_size_pt: float = 12,
 ) -> str:
-    """Append a native TOC field to an empty paragraph."""
+    """Append a simple or complex native TOC field to an empty paragraph."""
     start, end = _validate_levels(levels)
+    field_kind = _validate_field_kind(field_kind)
+    half_points = _validate_placeholder_format(
+        placeholder_font,
+        placeholder_size_pt,
+    )
     if paragraph.part is not document.part:
         raise ValueError("目录域段落不属于当前文档")
     if title_paragraph.part is not document.part:
@@ -327,32 +404,47 @@ def append_native_toc(
 
     instruction_text = f'TOC \\o "{start}-{end}" \\h \\z \\u'
 
-    begin = OxmlElement("w:fldChar")
-    begin.set(qn("w:fldCharType"), "begin")
-    begin.set(qn("w:dirty"), "true")
-
-    instruction = OxmlElement("w:instrText")
-    instruction.set(XML_SPACE, "preserve")
-    instruction.text = f" {instruction_text} "
-
-    separate = OxmlElement("w:fldChar")
-    separate.set(qn("w:fldCharType"), "separate")
-
     result = OxmlElement("w:t")
+    result.set(XML_SPACE, "preserve")
     result.text = placeholder
 
-    end_field = OxmlElement("w:fldChar")
-    end_field.set(qn("w:fldCharType"), "end")
-
     request_field_update_on_open(document)
-    for run in (
-        _run_with_child(begin),
-        _run_with_child(instruction),
-        _run_with_child(separate),
-        _run_with_child(result),
-        _run_with_child(end_field),
-    ):
-        paragraph._p.append(run)
+    if field_kind == "simple":
+        simple = OxmlElement("w:fldSimple")
+        simple.set(qn("w:instr"), f" {instruction_text} ")
+        simple.set(qn("w:dirty"), "true")
+        simple.append(
+            _formatted_run_with_child(
+                result,
+                font_name=placeholder_font,
+                half_points=half_points,
+            )
+        )
+        paragraph._p.append(simple)
+    else:
+        begin = OxmlElement("w:fldChar")
+        begin.set(qn("w:fldCharType"), "begin")
+        begin.set(qn("w:dirty"), "true")
+
+        instruction = OxmlElement("w:instrText")
+        instruction.set(XML_SPACE, "preserve")
+        instruction.text = f" {instruction_text} "
+
+        separate = OxmlElement("w:fldChar")
+        separate.set(qn("w:fldCharType"), "separate")
+
+        end_field = OxmlElement("w:fldChar")
+        end_field.set(qn("w:fldCharType"), "end")
+        for child in (begin, instruction, separate):
+            paragraph._p.append(_run_with_child(child))
+        paragraph._p.append(
+            _formatted_run_with_child(
+                result,
+                font_name=placeholder_font,
+                half_points=half_points,
+            )
+        )
+        paragraph._p.append(_run_with_child(end_field))
     return instruction_text
 
 
@@ -385,6 +477,27 @@ def _instruction_switch_arguments(
     )
 
 
+def _validate_toc_instruction(
+    instruction: str,
+    *,
+    start: int,
+    end: int,
+) -> None:
+    expected_level_argument = f"{start}-{end}"
+    level_arguments = _instruction_switch_arguments(instruction, "\\O")
+    if level_arguments != (expected_level_argument,):
+        raise ValueError(
+            f"TOC 目录级别错误：期望 {expected_level_argument}，实际 {instruction}"
+        )
+    missing_switches = [
+        switch
+        for switch in ("\\H", "\\Z", "\\U")
+        if not _instruction_has_switch(instruction, switch)
+    ]
+    if missing_switches:
+        raise ValueError("TOC 缺少开关：" + "、".join(missing_switches))
+
+
 def _toc_start_paragraph_indices(document_root) -> tuple[int, ...]:
     body = document_root.find(qn("w:body"))
     if body is None:
@@ -398,7 +511,12 @@ def _toc_start_paragraph_indices(document_root) -> tuple[int, ...]:
                 if not _is_in_textbox(element)
             )
         )
-        if _is_toc_instruction(instruction):
+        simple_toc = any(
+            not _is_in_textbox(element)
+            and _is_toc_instruction(element.get(qn("w:instr")) or "")
+            for element in paragraph.iter(qn("w:fldSimple"))
+        )
+        if _is_toc_instruction(instruction) or simple_toc:
             indices.append(index)
     return tuple(indices)
 
@@ -409,13 +527,16 @@ def validate_native_toc(
     toc_title: str,
     levels: tuple[int, int] = (1, 3),
     expected_count: int = 1,
+    field_kind: str | None = None,
 ) -> NativeTocValidation:
-    """Validate native TOC structure and source headings in a saved DOCX."""
+    """Validate simple or complex native TOC fields in a saved DOCX."""
     start, end = _validate_levels(levels)
     if type(expected_count) is not int or expected_count < 1:
         raise ValueError("expected_count 必须是大于等于 1 的整数")
     if not toc_title.strip():
         raise ValueError("toc_title 不能为空")
+    if field_kind is not None:
+        field_kind = _validate_field_kind(field_kind)
 
     document_path = Path(path)
     if not document_path.is_file():
@@ -435,43 +556,41 @@ def validate_native_toc(
         settings_root = etree.fromstring(archive.read("word/settings.xml"))
 
     toc_fields, open_toc_fields, unmatched_ends = _toc_fields(document_root)
-    simple_toc_instructions = _simple_toc_instructions(document_root)
-    if simple_toc_instructions:
-        raise ValueError(
-            "发现 w:fldSimple 原生 TOC；当前 helper 只验证完整复杂域："
-            + "；".join(simple_toc_instructions)
-        )
+    simple_toc_fields = _simple_toc_fields(document_root)
     if open_toc_fields or unmatched_ends:
         raise ValueError(
             "DOCX 存在未完整配对的复杂域："
             f"未结束 TOC={len(open_toc_fields)}，无起点 end={unmatched_ends}"
         )
-    if len(toc_fields) != expected_count:
+    total_count = len(toc_fields) + len(simple_toc_fields)
+    if total_count != expected_count:
         raise ValueError(
-            f"原生 TOC 数量错误：期望 {expected_count}，实际 {len(toc_fields)}"
+            f"原生 TOC 数量错误：期望 {expected_count}，实际 {total_count}"
+        )
+    field_kinds = ("complex",) * len(toc_fields) + ("simple",) * len(simple_toc_fields)
+    if field_kind is not None and set(field_kinds) != {field_kind}:
+        raise ValueError(
+            f"TOC 域类型错误：期望 {field_kind}，实际 {'、'.join(field_kinds)}"
         )
 
-    expected_level_argument = f"{start}-{end}"
     for toc_field in toc_fields:
-        level_arguments = _instruction_switch_arguments(
+        _validate_toc_instruction(
             toc_field.instruction,
-            "\\O",
+            start=start,
+            end=end,
         )
-        if level_arguments != (expected_level_argument,):
-            raise ValueError(
-                f"TOC 目录级别错误：期望 {start}-{end}，实际 {toc_field.instruction}"
-            )
-        missing_switches = [
-            switch
-            for switch in ("\\H", "\\Z", "\\U")
-            if not _instruction_has_switch(toc_field.instruction, switch)
-        ]
-        if missing_switches:
-            raise ValueError("TOC 缺少开关：" + "、".join(missing_switches))
         if not toc_field.has_separator:
             raise ValueError("TOC 缺少 separate 域节点")
         if not toc_field.dirty:
             raise ValueError("TOC begin 未设置 w:dirty=true")
+    for toc_field in simple_toc_fields:
+        _validate_toc_instruction(
+            toc_field.instruction,
+            start=start,
+            end=end,
+        )
+        if not toc_field.has_result:
+            raise ValueError("w:fldSimple TOC 缺少可见结果文字")
 
     update_on_open = _settings_request_update(settings_root)
     if not update_on_open:
@@ -505,7 +624,11 @@ def validate_native_toc(
             raise ValueError("目录标题使用了会被目录收录的 outline level")
 
     return NativeTocValidation(
-        instructions=tuple(toc_field.instruction for toc_field in toc_fields),
+        instructions=(
+            tuple(toc_field.instruction for toc_field in toc_fields)
+            + tuple(toc_field.instruction for toc_field in simple_toc_fields)
+        ),
+        field_kinds=field_kinds,
         heading_count=heading_count,
         update_on_open=update_on_open,
     )
