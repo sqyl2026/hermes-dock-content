@@ -1,6 +1,6 @@
 # Word（python-docx 与 OOXML）
 
-依赖：`python-docx`，Python 中使用 `import docx`；生成原生批注时要求 `python-docx>=1.2.0`。先阅读 `../SKILL.md` 的容器路径、输出、安全和 Word 修改规则。`python-docx` 没有覆盖修订、动态目录等全部 Word 功能；需要时通过它提供的 OOXML 元素操作 WordprocessingML，不要改写整个 ZIP 包。
+依赖：`python-docx`，Python 中使用 `import docx`；生成原生批注时要求 `python-docx>=1.2.0`。先阅读 `../SKILL.md` 和 `word-common.md`。`python-docx` 没有覆盖修订、动态目录等全部 Word 功能；需要时通过它提供的 OOXML 元素操作 WordprocessingML，不要改写整个 ZIP 包。
 
 ## 目录
 
@@ -29,8 +29,6 @@
 4. 文本跨 run 时建立“可见字符区间 → XML run”的映射，拆分边界 run 后处理。不要把整个段落合并到第一个 run。
 5. 没有命中时失败；有多个命中且用户没有明确要求“全部”或第几个时，先询问。
 6. 修改已有修订前保留其作者、时间和 ID。不自动接受、拒绝或压平修订。
-7. “正文”包含主文档段落和所有层级的嵌套表格；“全文/全局/整个文档”还包含不同的首页、奇数页和偶数页页眉页脚。
-8. 文本框、脚注、尾注、批注、公式及嵌入对象不在常规遍历范围内。发现或无法确认时明确报告，不声称已完成全文修改。
 
 常用 OOXML 导入：
 
@@ -544,7 +542,7 @@ with zipfile.ZipFile(OUTPUT_PATH) as archive:
 
 ### 字体属性
 
-中文字体不能只设置 `run.font.name`。同时设置 Word 的四个字体槽位：
+中文字体不能只设置 `run.font.name`。同时设置 Word 的四个字体槽位，并在完整脚本中包含 `word-common.md` 的 `set_font_slots()`：
 
 - `w:ascii`：ASCII 字符；
 - `w:hAnsi`：高 ANSI/常见西文字符；
@@ -557,19 +555,8 @@ from docx.shared import Pt, RGBColor
 
 
 def set_run_fonts(run, latin: str, east_asia: str | None = None) -> None:
-    east_asia = east_asia or latin
     run.font.name = latin
-    rpr = run._r.get_or_add_rPr()
-    rfonts = rpr.find(qn("w:rFonts"))
-    if rfonts is None:
-        rfonts = OxmlElement("w:rFonts")
-        rpr.insert(0, rfonts)
-    rfonts.set(qn("w:ascii"), latin)
-    rfonts.set(qn("w:hAnsi"), latin)
-    rfonts.set(qn("w:eastAsia"), east_asia)
-    rfonts.set(qn("w:cs"), latin)
-    for theme_slot in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
-        rfonts.attrib.pop(qn(theme_slot), None)
+    set_font_slots(run._r.get_or_add_rPr(), latin, east_asia)
 
 
 def apply_run_format(run) -> None:
@@ -604,22 +591,8 @@ def apply_run_format(run) -> None:
 
 ```python
 def set_style_fonts(style, latin: str, east_asia: str | None = None) -> None:
-    east_asia = east_asia or latin
     style.font.name = latin
-    rpr = style.element.get_or_add_rPr()
-    rfonts = rpr.find(qn("w:rFonts"))
-    if rfonts is None:
-        rfonts = OxmlElement("w:rFonts")
-        rpr.insert(0, rfonts)
-    for slot, value in (
-        ("w:ascii", latin),
-        ("w:hAnsi", latin),
-        ("w:eastAsia", east_asia),
-        ("w:cs", latin),
-    ):
-        rfonts.set(qn(slot), value)
-    for theme_slot in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
-        rfonts.attrib.pop(qn(theme_slot), None)
+    set_font_slots(style.element.get_or_add_rPr(), latin, east_asia)
 ```
 
 ### 强制全文统一
@@ -642,6 +615,7 @@ def set_style_fonts(style, latin: str, east_asia: str | None = None) -> None:
 
 - 目录来源段落优先使用内置 `Heading 1`～`Heading 9` 样式。
 - 自定义样式只有设置正确 outline level，或 TOC 指令显式包含样式映射时才会进入目录。
+- 创建自定义标题样式时使用 `style.element.get_or_add_pPr().get_or_add_outlineLvl()` 设置 `w:val`；`Heading 1` 对应 `0`、`Heading 2` 对应 `1`，依次类推。
 - 目录标题“目录”本身不能使用会被目录收录的 Heading 样式。优先使用 `TOC Heading`；不存在时使用不带 outline level 的普通样式并单独设置外观。
 - 插入前检查现有 `w:instrText`，发现已有 `TOC` 域时不要重复添加；用户要求替换时必须定位完整的 begin/separate/end 域范围。
 
@@ -796,7 +770,9 @@ def extract_images():
 
 ## 创建文档
 
-创建新文档时先定义标题和正文样式，再添加内容。需要目录时先为章节应用内置 Heading 样式，然后按“生成标准目录”插入 TOC 域：
+创建新文档时同时读取 `word-layout.md`，先确定页面和视觉约束，再定义标题、正文和表格样式。需要目录时先为章节应用内置 Heading 样式，然后按“生成标准目录”插入 TOC 域。
+
+以下代码只演示安全的创建顺序，不代表完整排版配方：
 
 ```python
 from pathlib import Path
@@ -827,7 +803,9 @@ def main():
 
 ## 保存和验证
 
-只成功执行 `document.save()` 不代表修改正确。至少执行：
+只成功执行 `document.save()` 不代表修改正确。写入前先记录任务涉及的基线，例如目标文本、段落、表格、图片、节、样式、域、超链接、修订、批注和页眉页脚数量。模板任务按 `word-template.md` 同时记录源文档和模板结构。
+
+保存后至少执行：
 
 1. 保存到不存在的新路径。
 2. 用 `docx.Document(str(OUTPUT_PATH))` 重新打开。
@@ -837,7 +815,9 @@ def main():
 6. 对修订检查 `word/document.xml` 及涉及的页眉页脚 part，确认目标 `w:id`、作者、时间、`w:ins/w:del` 或属性 change 存在，其他修订未变化。
 7. 对批注检查 `word/comments.xml`、document relationship、Content Type，以及相同 ID 的 `commentRangeStart/commentRangeEnd/commentReference`；重新打开后核对批注正文和作者。
 8. 对目录检查完整的 begin/instrText/separate/end 域结构和 `word/settings.xml` 中的 `w:updateFields`。
-9. 验证失败时删除本次新建的不完整输出；保留脚本并报告真实错误。
+9. 检查任务涉及的内部 relationship Target 存在，新增 ID 不与既有书签、批注、drawing、编号或修订 ID 冲突。
+10. 比较基线；每项结构变化都必须能对应到用户请求。未知对象减少、关系断裂、非目标内容变化或无法解释的计数差异视为失败。
+11. 验证失败时删除本次新建的不完整输出；保留脚本并报告真实错误。
 
 可以用 ZIP 做只读结构检查：
 
@@ -851,7 +831,7 @@ with zipfile.ZipFile(OUTPUT_PATH) as archive:
     settings_xml = etree.fromstring(archive.read("word/settings.xml"))
 ```
 
-最终报告输出完整路径、修改模式、实际范围、命中数量、修订或批注作者、新增批注 ID、未覆盖对象，以及目录是否仍需在 Word/WPS 中更新。视觉版式只有经过 Word/WPS 或兼容排版引擎打开/渲染后才能确认；纯 XML 验证不能证明分页、换行和字体替换后的视觉效果完全正确。
+最终报告输出完整路径、修改模式、实际范围、命中数量、结构变化、修订或批注作者、新增批注 ID、未覆盖对象，以及目录是否仍需在 Word/WPS 中更新。视觉版式只有经过 Word/WPS 或兼容排版引擎打开/渲染后才能确认；纯 XML 验证不能证明分页、换行和字体替换后的视觉效果完全正确。
 
 ## 能力边界
 
