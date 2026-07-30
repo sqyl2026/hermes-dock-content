@@ -1,0 +1,4 @@
+interface:
+  display_name: "公开网页与服务"
+  short_description: "面向中国大陆或海外安全发布容器内网页与服务"
+  default_prompt: "使用 $web-publish 将这个网页或本地服务发布为可验证的公网链接。"
