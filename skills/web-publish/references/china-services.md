@@ -2,6 +2,13 @@
 
 根据内容类型直接选择方案，并持续推进到拿到可验证的 URL。
 
+## 目录
+
+- cpolar：临时网页和动态服务
+- NATAPP：已有免费隧道时使用
+- EdgeOne Makers：中国大陆静态网站
+- 失败时继续
+
 ## cpolar：临时网页和动态服务
 
 1. 确认服务已在 `127.0.0.1:<port>` 可访问。
@@ -10,7 +17,7 @@
 
    > 请用手机打开 cpolar 免费注册页面：`https://dashboard.cpolar.com/signup`。注册并登录后，进入后台左侧的“验证”，点击复制 Authtoken，然后把复制到的整段 Token 直接发给我。后面的安装、配置和发布都由我完成，不需要操作电脑或命令行。
 
-4. 收到 Token 后不要重复展示。使用 `process` 启动脚本并通过标准输入发送 Token，生成临时配置：
+4. 收到 Token 后不要重复展示。使用 `process` 启动脚本并通过标准输入发送 Token，生成临时配置。默认使用本地 API 端口 `4040`；端口已占用时选择其他空闲端口并增加 `--web-port <port>`：
 
    ```bash
    /opt/hermes/.venv/bin/python \
@@ -21,17 +28,31 @@
 
    将用户发来的 Token 写入该进程的标准输入并发送换行。脚本只输出临时配置路径。
 
-5. 使用 `process` 启动：
+5. 记录脚本输出的 `<config-path>`。配置已启用 cpolar 控制台 UI、本地 API 和独立客户端日志。使用 `process` 启动唯一的隧道进程，并把控制台输出同时写入日志：
 
    ```bash
+   set -o pipefail
    env -u CPOLAR_AUTHTOKEN \
      /opt/data/.dock/web-publish-runtime/cpolar/<version>/cpolar \
      http \
-     -config=/opt/data/path/to/generated-cpolar.yml \
-     4173
+     -config=<config-path> \
+     4173 \
+     2>&1 | tee -a <config-path>.console.log
    ```
 
-6. 从输出提取 HTTPS `Forwarding` 地址并实际请求。上线后可删除临时配置；保留本地服务和隧道进程。
+6. 在隧道进程保持运行时等待 URL。`<web-port>` 必须与生成配置时一致：
+
+   ```bash
+   /opt/hermes/.venv/bin/python \
+     "${HERMES_DOCK_PROFILE_HOME}/skills/web-publish/scripts/wait_for_public_url.py" \
+     cpolar \
+     --api-url http://127.0.0.1:<web-port>/api/tunnels \
+     --log <config-path>.console.log \
+     --log <config-path>.client.log \
+     --timeout 30
+   ```
+
+   脚本优先读取本地 API，API 不可用时从两份日志提取 HTTPS 地址。取得 URL 后直接请求验证，不要停止并重启 cpolar。超时则检查该进程是否仍存活及两份日志；确认没有进展后终止它并切换方案。上线后可删除临时配置，保留日志、本地服务和隧道进程。
 
 免费随机地址会变化，适合预览、联调、Webhook 和短期分享。需要固定域名时再讨论套餐或正式部署。
 

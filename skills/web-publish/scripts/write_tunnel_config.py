@@ -47,16 +47,21 @@ def read_token(variable: str, token_stdin: bool) -> str:
     return token
 
 
-def render(provider: str, token: str) -> str:
+def render(provider: str, token: str, config_path: str, web_port: int) -> str:
+    client_log_path = f"{config_path}.client.log"
     if provider == "cpolar":
         return "\n".join(
             [
                 f"authtoken: {json.dumps(token)}",
                 "region: cn",
-                "console_ui: false",
+                "console_ui: true",
+                "console_ui_color: transparent",
                 "inspect_db_size: -1",
-                "log: stdout",
+                f"log: {json.dumps(client_log_path)}",
                 "log_level: info",
+                "log_format: logfmt",
+                "update: false",
+                f"web_addr: 127.0.0.1:{web_port}",
                 "",
             ]
         )
@@ -64,7 +69,7 @@ def render(provider: str, token: str) -> str:
         [
             "[default]",
             f"authtoken={token}",
-            "log=stdout",
+            f"log={client_log_path}",
             "loglevel=ERROR",
             "http_proxy=",
             "",
@@ -82,7 +87,15 @@ def main() -> None:
         action="store_true",
         help="Read one service-token line from standard input instead of the profile environment.",
     )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=4040,
+        help="Local cpolar Web UI/API port. Defaults to 4040.",
+    )
     args = parser.parse_args()
+    if not 1 <= args.web_port <= 65535:
+        parser.error("--web-port must be between 1 and 65535")
 
     variable, suffix = PROVIDERS[args.provider]
     token = read_token(variable, args.token_stdin)
@@ -95,7 +108,7 @@ def main() -> None:
     )
     os.fchmod(file_descriptor, 0o600)
     with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="\n") as config:
-        config.write(render(args.provider, token))
+        config.write(render(args.provider, token, path, args.web_port))
     print(path)
 
 

@@ -2,50 +2,96 @@
 
 这些方案适合海外访问者、快速预览，或大陆方案暂时不可用时的备用链接。依次尝试可用方案，不必为每次切换都停下来确认。
 
+## 目录
+
+- Pinggy
+- Cloudflare Quick Tunnel
+- localhost.run
+- 静态托管
+
 ## Pinggy
 
-容器已有 SSH 时直接启动：
+容器已有 SSH 时，先选择一个空闲的本地调试端口，默认尝试 `4300`；再用 `mktemp "${HERMES_DOCK_PROFILE_HOME}/tmp/web-publish-pinggy-XXXXXX"` 创建本次专用日志。使用 `process` 启动唯一的 SSH 进程：
 
 ```bash
+set -o pipefail
 ssh \
+  -tt \
   -p 443 \
   -o StrictHostKeyChecking=accept-new \
   -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=30 \
   -R 0:127.0.0.1:4173 \
-  free.pinggy.io
+  -L <debugger-port>:localhost:4300 \
+  free.pinggy.io \
+  2>&1 | tee -a <pinggy-log>
 ```
 
-从输出提取 HTTPS URL 并请求验证。免费隧道通常约 60 分钟，重连后 URL 可能变化。
+`-tt` 强制 SSH 在后台进程环境中分配 PTY，`tee` 保留控制台输出；本地转发提供 Pinggy 官方 URL API。保持该进程运行并获取 URL：
 
-官方文档：`https://pinggy.io/docs/http_tunnels/`
+```bash
+/opt/hermes/.venv/bin/python \
+  "${HERMES_DOCK_PROFILE_HOME}/skills/web-publish/scripts/wait_for_public_url.py" \
+  pinggy \
+  --api-url http://127.0.0.1:<debugger-port>/urls \
+  --log <pinggy-log> \
+  --timeout 30
+```
+
+用返回的 HTTPS URL 立即验证。不要先启动一次取得 URL，再停止并后台重连；免费隧道每次连接的随机 URL 可能不同。进程退出或重连后，旧 URL 立即作废，重新从当前连接获取并验证。
+
+官方文档：
+
+- `https://pinggy.io/docs/usages/`
+- `https://pinggy.io/docs/api/web_debugger_api/`
 
 ## Cloudflare Quick Tunnel
 
-已有 `cloudflared` 时：
+已有 `cloudflared` 时，使用 `process` 启动并把输出写入本次专用日志：
 
 ```bash
-cloudflared tunnel --url http://127.0.0.1:4173
+set -o pipefail
+cloudflared tunnel --url http://127.0.0.1:4173 \
+  2>&1 | tee -a <cloudflared-log>
 ```
 
-没有客户端时，可把明确版本安装到 `/opt/data/.dock/web-publish-runtime/cloudflared/<version>/` 后继续。提取 `trycloudflare.com` 地址并验证。
+没有客户端时，可把明确版本安装到 `/opt/data/.dock/web-publish-runtime/cloudflared/<version>/` 后继续。使用下面的命令提取 `trycloudflare.com` 地址并验证，保留产生该 URL 的进程：
+
+```bash
+/opt/hermes/.venv/bin/python \
+  "${HERMES_DOCK_PROFILE_HOME}/skills/web-publish/scripts/wait_for_public_url.py" \
+  cloudflare \
+  --log <cloudflared-log> \
+  --timeout 30
+```
 
 官方文档：`https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/`
 
 ## localhost.run
 
-前两个方案不可用时：
+前两个方案不可用时，创建本次专用日志并使用 `process` 启动：
 
 ```bash
+set -o pipefail
 ssh \
+  -tt \
   -o StrictHostKeyChecking=accept-new \
   -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=30 \
   -R 80:127.0.0.1:4173 \
-  nokey@localhost.run
+  nokey@localhost.run \
+  2>&1 | tee -a <localhost-run-log>
 ```
 
-提取 HTTPS URL 并验证。
+使用下面的命令提取 HTTPS URL 并验证。与 Pinggy 相同，不要取得 URL 后重启 SSH 进程：
+
+```bash
+/opt/hermes/.venv/bin/python \
+  "${HERMES_DOCK_PROFILE_HOME}/skills/web-publish/scripts/wait_for_public_url.py" \
+  localhost-run \
+  --log <localhost-run-log> \
+  --timeout 30
+```
 
 官方文档：`https://localhost.run/docs/`
 
