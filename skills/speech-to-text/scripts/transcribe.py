@@ -285,6 +285,7 @@ def install_runtime(root: Path, python: str) -> Path:
                     "--no-input",
                     "--disable-pip-version-check",
                     f"sherpa-onnx=={SHERPA_ONNX_VERSION}",
+                    "numpy",
                 ],
                 check=True,
                 stdout=sys.stderr,
